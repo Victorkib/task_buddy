@@ -3,10 +3,11 @@ import Link from 'next/link'
 import { ForgotPasswordForm } from '@/components/auth/forgot-password-form'
 import { LoginHero } from '@/components/auth/login-hero'
 import { LoginLogo } from '@/components/auth/login-logo'
+import { PRODUCT_NAME, productTitle } from '@/lib/branding'
 
 export const metadata: Metadata = {
-  title: 'Forgot password | GCS WorkHub',
-  description: 'Request a password reset link for your GCS WorkHub account.',
+  title: productTitle('Forgot password'),
+  description: `Request a password reset link for your ${PRODUCT_NAME} account.`,
 }
 
 export const viewport: Viewport = {

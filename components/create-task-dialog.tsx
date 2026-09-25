@@ -62,9 +62,11 @@ export function CreateTaskDialog({
   currentUserId,
   currentUserDepartmentId = '',
   canAssignAcrossDepartments = false,
+  canAssignOthers = true,
   departments,
   projects = [],
   defaultDepartmentId = '',
+  defaultAssigneeId = '',
   defaultProjectId = '',
   defaultMilestoneId = '',
   lockDepartment = false,
@@ -75,9 +77,12 @@ export function CreateTaskDialog({
   currentUserId: string
   currentUserDepartmentId?: string
   canAssignAcrossDepartments?: boolean
+  /** When false, assignee stays locked to the current user (IC create). */
+  canAssignOthers?: boolean
   departments: DepartmentOption[]
   projects?: TaskProjectOption[]
   defaultDepartmentId?: string
+  defaultAssigneeId?: string
   defaultProjectId?: string
   defaultMilestoneId?: string
   lockDepartment?: boolean
@@ -93,6 +98,11 @@ export function CreateTaskDialog({
     [allPeople],
   )
   const defaultLead = defaultDepartmentId ? departmentLead(defaultDepartmentId, roster, departments) : null
+  const initialAssignee = !canAssignOthers
+    ? currentUserId
+    : defaultAssigneeId ||
+      (defaultDepartmentId && defaultLead ? defaultLead.id : '') ||
+      currentUserId
   const [error, setError] = useState<string | null>(null)
   const [placement, setPlacement] = useState<'project' | 'new' | 'independent'>(
     defaultProjectId || defaultMilestoneId ? 'project' : 'independent',
@@ -104,14 +114,14 @@ export function CreateTaskDialog({
   )
   const [newProjectMilestone, setNewProjectMilestone] = useState('Delivery')
   const [title, setTitle] = useState('')
-  const [assigneeId, setAssigneeId] = useState(defaultLead?.id ?? currentUserId)
+  const [assigneeId, setAssigneeId] = useState(initialAssignee)
   const [departmentId, setDepartmentId] = useState(defaultDepartmentId)
   const [category, setCategory] = useState('operational')
   const [categoryCustom, setCategoryCustom] = useState('')
   const [priority, setPriority] = useState('medium')
   const [startDate, setStartDate] = useState(localIsoDate(0))
   const [dueDate, setDueDate] = useState(localIsoDate(7))
-  const [ownerLocked, setOwnerLocked] = useState(Boolean(defaultDepartmentId))
+  const [ownerLocked, setOwnerLocked] = useState(!canAssignOthers || Boolean(defaultAssigneeId))
   const [departmentLocked, setDepartmentLocked] = useState(Boolean(defaultDepartmentId) && lockDepartment)
   const [categoryLocked, setCategoryLocked] = useState(false)
   const [priorityLocked, setPriorityLocked] = useState(false)
@@ -184,6 +194,7 @@ export function CreateTaskDialog({
   }
 
   function onOwnerChange(value: string) {
+    if (!canAssignOthers) return
     setOwnerLocked(true)
     setAssigneeId(value)
     const owner = roster.find((person) => person.id === value)
@@ -196,12 +207,6 @@ export function CreateTaskDialog({
   function onDepartmentChange(value: string) {
     setDepartmentLocked(true)
     setDepartmentId(value)
-    if (!value) return
-    const lead = departmentLead(value, visibleRoster, departments)
-    if (lead && lead.id !== assigneeId) {
-      setAssigneeId(lead.id)
-      setOwnerLocked(false)
-    }
   }
 
   function onProjectChange(value: string) {
@@ -218,7 +223,7 @@ export function CreateTaskDialog({
 
   async function action(formData: FormData) {
     formData.set('placement', placement)
-    formData.set('assigneeId', assigneeId)
+    formData.set('assigneeId', canAssignOthers ? assigneeId : currentUserId)
     formData.set('departmentId', departmentId)
     formData.set('category', category)
     formData.set('categoryCustom', categoryCustom)
@@ -380,7 +385,7 @@ export function CreateTaskDialog({
                   value={newProjectTitle}
                   onChange={(event) => setNewProjectTitle(event.target.value)}
                   required
-                  placeholder="e.g. WorkHub rollout"
+                  placeholder="e.g. Task Buddy rollout"
                 />
               </label>
               <label>
@@ -418,7 +423,7 @@ export function CreateTaskDialog({
             onChange={(event) => onTitleChange(event.target.value)}
             autoFocus
             required
-            placeholder="e.g. UMGM tenders or Harden WorkHub access"
+            placeholder="e.g. UMGM tenders or Harden Task Buddy access"
           />
 
           {title.trim() && matchCopy && (
@@ -434,32 +439,47 @@ export function CreateTaskDialog({
           <div className="form-grid">
             <label>
               Led by
-              <select value={assigneeId} onChange={(event) => onOwnerChange(event.target.value)}>
-                {departments.map((department) => {
-                  const members = visibleRoster.filter((person) => person.departmentId === department.id)
-                  if (members.length === 0) return null
-                  return (
-                    <optgroup key={department.id} label={department.name}>
-                      {members.map((person) => (
-                        <option key={person.id} value={person.id}>
-                          {person.firstName} {person.lastName} · {person.jobTitle}
-                        </option>
-                      ))}
+              {!canAssignOthers ? (
+                <>
+                  <input
+                    value={
+                      selectedOwner
+                        ? `${selectedOwner.firstName} ${selectedOwner.lastName}`
+                        : 'You'
+                    }
+                    readOnly
+                    aria-readonly="true"
+                  />
+                  <span className="field-hint">You own work you create. Ask a manager or head to assign tasks to others.</span>
+                </>
+              ) : (
+                <select value={assigneeId} onChange={(event) => onOwnerChange(event.target.value)}>
+                  {departments.map((department) => {
+                    const members = visibleRoster.filter((person) => person.departmentId === department.id)
+                    if (members.length === 0) return null
+                    return (
+                      <optgroup key={department.id} label={department.name}>
+                        {members.map((person) => (
+                          <option key={person.id} value={person.id}>
+                            {person.firstName} {person.lastName} · {person.jobTitle}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )
+                  })}
+                  {visibleRoster.some((person) => !person.departmentId) && (
+                    <optgroup label="Unassigned">
+                      {visibleRoster
+                        .filter((person) => !person.departmentId)
+                        .map((person) => (
+                          <option key={person.id} value={person.id}>
+                            {person.firstName} {person.lastName} · {person.jobTitle}
+                          </option>
+                        ))}
                     </optgroup>
-                  )
-                })}
-                {visibleRoster.some((person) => !person.departmentId) && (
-                  <optgroup label="Unassigned">
-                    {visibleRoster
-                      .filter((person) => !person.departmentId)
-                      .map((person) => (
-                        <option key={person.id} value={person.id}>
-                          {person.firstName} {person.lastName} · {person.jobTitle}
-                        </option>
-                      ))}
-                  </optgroup>
-                )}
-              </select>
+                  )}
+                </select>
+              )}
             </label>
             <label>
               Department

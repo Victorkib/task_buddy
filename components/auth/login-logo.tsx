@@ -1,3 +1,5 @@
+import { mailProductLabel } from '@/lib/branding'
+
 export function LoginBrandMark({ className = '' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 48 48" fill="none" aria-hidden="true">
@@ -25,7 +27,7 @@ export function LoginLogo({ size = 'lg' }: { size?: 'md' | 'lg' }) {
         <LoginBrandMark className={size === 'lg' ? 'h-8 w-8' : 'h-7 w-7'} />
       </div>
       <div className="min-w-0">
-        <p className={`${title} font-semibold leading-tight tracking-tight text-white`}>GCS WorkHub</p>
+        <p className={`${title} font-semibold leading-tight tracking-tight text-white`}>{mailProductLabel()}</p>
         <p className="text-xs font-medium text-emerald-400">Operational workspace</p>
       </div>
     </div>

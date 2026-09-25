@@ -24,6 +24,7 @@ import {
   userRoles,
   users,
 } from '@/lib/db/schema'
+import { PRODUCT_NAME } from '@/lib/branding'
 import { fullName, makeInitials } from '@/lib/format'
 import { getPublicAppUrl, isMailConfigured, sendMail } from '@/lib/mail/send'
 import { inviteSetupEmail, passwordResetEmail, tempPasswordEmail } from '@/lib/mail/templates'
@@ -170,7 +171,7 @@ export async function inviteEmployee(formData: FormData) {
     if (existing.status === 'inactive') {
       return { error: 'That email belongs to a deactivated account. Reactivate them from the people list.' }
     }
-    return { error: 'That email is already on WorkHub.' }
+    return { error: `That email is already on ${PRODUCT_NAME}.` }
   }
 
   const company = await getCompany()
@@ -228,7 +229,7 @@ export async function inviteEmployee(formData: FormData) {
       entityType: 'user',
       entityId: created.id,
       action: 'invited',
-      summary: `invited ${firstName} ${lastName} to WorkHub`,
+      summary: `invited ${firstName} ${lastName} to ${PRODUCT_NAME}`,
     })
 
     refreshWorkhub()
@@ -302,7 +303,7 @@ export async function inviteEmployee(formData: FormData) {
     entityType: 'user',
     entityId: created.id,
     action: 'invited',
-    summary: `added ${firstName} ${lastName} to WorkHub with a temporary password`,
+    summary: `added ${firstName} ${lastName} to ${PRODUCT_NAME} with a temporary password`,
   })
 
   refreshWorkhub()
@@ -455,7 +456,7 @@ export async function acceptInvite(formData: FormData) {
       entityType: 'user',
       entityId: invite.userId,
       action: 'invite_accepted',
-      summary: `${fullName(invite.user)} activated their WorkHub account`,
+      summary: `${fullName(invite.user)} activated their ${PRODUCT_NAME} account`,
     })
   }
 
@@ -538,7 +539,7 @@ export async function requestPasswordReset(formData: FormData) {
   // Always look successful to avoid account enumeration.
   const generic = {
     ok: true as const,
-    message: 'If that email is on WorkHub, a reset link is on its way.',
+    message: `If that email is on ${PRODUCT_NAME}, a reset link is on its way.`,
   }
   if (!user || user.status !== 'active' || !user.passwordHash) return generic
 
@@ -685,7 +686,7 @@ export async function removePerson(input: { userId: string; transferToUserId?: s
       action: 'removed',
       summary: recipient
         ? `permanently removed ${fullName(target)} and transferred their work to ${fullName(recipient)}`
-        : `permanently removed ${fullName(target)} from WorkHub`,
+        : `permanently removed ${fullName(target)} from ${PRODUCT_NAME}`,
     })
   }
 

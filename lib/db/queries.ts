@@ -155,6 +155,7 @@ export async function listTasks(options?: { assigneeId?: string; departmentId?: 
       },
       comments: { with: { user: true } },
       attachments: { with: { user: true } },
+      reports: { with: { author: true, emailedTo: true }, orderBy: (table, { desc: d }) => [d(table.createdAt)] },
       approvals: { with: { requestor: true, approver: true } },
       deliverables: true,
       milestoneLinks: { with: { milestone: true } },
@@ -362,6 +363,7 @@ export async function listProjects(options?: { limit?: number; viewer?: CurrentU
   const rows = await getDb().query.projects.findMany({
     with: {
       owner: { with: { department: true } },
+      partner: true,
       department: true,
       teams: { with: { user: true } },
       projectDepartments: { with: { department: true } },
@@ -487,6 +489,8 @@ export async function listProjects(options?: { limit?: number; viewer?: CurrentU
       description: project.description,
       owner: project.owner ? `${project.owner.firstName} ${project.owner.lastName}` : 'Unassigned',
       ownerId: project.ownerId,
+      partnerId: project.partnerId ?? null,
+      partner: project.partner ? `${project.partner.firstName} ${project.partner.lastName}` : null,
       departmentId: project.departmentId ?? project.owner?.departmentId ?? null,
       department: project.department?.name ?? project.owner?.department?.name ?? null,
       projectStatus: project.status,

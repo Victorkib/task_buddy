@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useMemo, useState, type Dispatch, SetStateAction } from 'react'
-import { GitBranch, ListChecks, MessageSquare, Paperclip, X } from 'lucide-react'
+import { Download, FileText, GitBranch, ListChecks, Loader2, Mail, MessageSquare, Paperclip, X } from 'lucide-react'
+import { createTaskReport } from '@/app/actions'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { CategoryField } from '@/components/category-field'
@@ -15,11 +16,22 @@ import { categoryLabel, formatDue, formatRelative, fullName, toDateInputValue } 
 import type { Person } from '@/lib/types'
 import type { UploadedFile } from '@/lib/uploads/client'
 
-export type TaskDetailTab = 'overview' | 'files' | 'comments' | 'delivery' | 'links'
+export type TaskDetailTab = 'overview' | 'files' | 'comments' | 'delivery' | 'reports' | 'links'
 
 type TaskCategory = (typeof taskCategoryEnum.enumValues)[number]
 type TaskStatus = (typeof taskStatusEnum.enumValues)[number]
 type TaskPriority = keyof typeof TASK_PRIORITY_LABELS
+
+export type TaskReportEntry = {
+  id: string
+  title: string
+  body: string
+  createdAt: string | Date
+  emailedAt?: string | Date | null
+  author?: { initials?: string; firstName: string; lastName: string; avatarUrl?: string | null; avatarColor?: string | null } | null
+}
+
+type TaskReport = TaskReportEntry
 
 type DetailTask = {
   id: string
@@ -69,6 +81,7 @@ type DetailTask = {
     evidenceOriginalName?: string | null
     decisionReason?: string | null
   }>
+  reports?: TaskReport[]
   blockingDependencies?: Array<{ id: string; blockedTask: { id: string; title: string } }>
   blockedByDependencies?: Array<{ id: string; blockingTask: { id: string; title: string } }>
 }
@@ -89,6 +102,77 @@ type TaskPatch = {
 type DepartmentOption = { id: string; name: string }
 
 const NEW_PROJECT_VALUE = '__new__'
+
+function downloadTextFile(filename: string, content: string, mimeType: string) {
+  const blob = new Blob([content], { type: mimeType })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+function slugFilePart(value: string) {
+  return value.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').slice(0, 48) || 'report'
+}
+
+function downloadReportTxt(report: TaskReportEntry, taskTitle: string) {
+  const author = report.author ? fullName(report.author) : 'Unknown author'
+  const lines = [
+    report.title,
+    `Task: ${taskTitle}`,
+    `Author: ${author}`,
+    `Created: ${new Date(report.createdAt).toLocaleString()}`,
+    report.emailedAt ? `Emailed to supervisor: ${new Date(report.emailedAt).toLocaleString()}` : '',
+    '',
+    report.body,
+  ].filter(Boolean)
+  downloadTextFile(`${slugFilePart(report.title)}.txt`, lines.join('\n'), 'text/plain;charset=utf-8')
+}
+
+function downloadReportHtml(report: TaskReportEntry, taskTitle: string) {
+  const author = report.author ? fullName(report.author) : 'Unknown author'
+  const escaped = (value: string) =>
+    value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
+  const bodyHtml = report.body
+    .split(/\n{2,}/)
+    .map((paragraph) => `<p>${escaped(paragraph.trim()).replaceAll('\n', '<br />')}</p>`)
+    .join('')
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>${escaped(report.title)}</title>
+  <style>
+    body { font-family: Segoe UI, Helvetica Neue, Arial, sans-serif; margin: 0; padding: 32px 20px; background: #eef3f8; color: #1a2740; }
+    .sheet { max-width: 680px; margin: 0 auto; background: #fff; border-radius: 14px; border: 1px solid #d5dee9; box-shadow: 0 10px 30px rgba(15,39,72,.08); overflow: hidden; }
+    .head { padding: 22px 26px; background: linear-gradient(135deg,#0f2748,#163a5f); color: #fff; }
+    .head em { display: block; font-style: normal; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #7dd3a0; font-weight: 700; }
+    .head h1 { margin: 8px 0 0; font-size: 22px; letter-spacing: -.02em; }
+    .meta { padding: 16px 26px; border-bottom: 1px solid #e8eef5; font-size: 13px; color: #6b7a90; display: grid; gap: 4px; }
+    .body { padding: 22px 26px 28px; font-size: 15px; line-height: 1.6; }
+    .body p { margin: 0 0 12px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <article class="sheet">
+    <header class="head">
+      <em>Task report</em>
+      <h1>${escaped(report.title)}</h1>
+    </header>
+    <div class="meta">
+      <div><strong>Task:</strong> ${escaped(taskTitle)}</div>
+      <div><strong>Author:</strong> ${escaped(author)}</div>
+      <div><strong>Created:</strong> ${escaped(new Date(report.createdAt).toLocaleString())}</div>
+      ${report.emailedAt ? `<div><strong>Supervisor notified:</strong> ${escaped(new Date(report.emailedAt).toLocaleString())}</div>` : ''}
+    </div>
+    <div class="body">${bodyHtml}</div>
+  </article>
+</body>
+</html>`
+  downloadTextFile(`${slugFilePart(report.title)}.html`, html, 'text/html;charset=utf-8')
+}
 
 export type TaskPlacementInput = {
   projectId: string | null
@@ -179,6 +263,7 @@ export function TaskDetailSheet({
   canCreateWork = false,
   currentUserDepartmentId = '',
   onSetPlacement,
+  onReportsChange,
 }: {
   task: DetailTask
   people: Person[]
@@ -247,6 +332,7 @@ export function TaskDetailSheet({
   canCreateWork?: boolean
   currentUserDepartmentId?: string
   onSetPlacement?: (input: TaskPlacementInput) => Promise<TaskPlacementResult>
+  onReportsChange?: (reports: TaskReportEntry[]) => void
 }) {
   const [confirm, setConfirm] = useState<
     | { kind: 'task' }
@@ -264,9 +350,17 @@ export function TaskDetailSheet({
   const [placementSaving, setPlacementSaving] = useState(false)
   const [placementError, setPlacementError] = useState<string | null>(null)
   const [placementSaved, setPlacementSaved] = useState(false)
+  const [reportTitle, setReportTitle] = useState('')
+  const [reportBody, setReportBody] = useState('')
+  const [emailToSupervisor, setEmailToSupervisor] = useState(false)
+  const [reportError, setReportError] = useState<string | null>(null)
+  const [reportSaving, setReportSaving] = useState(false)
+  const [reportSaved, setReportSaved] = useState<string | null>(null)
+  const [localReports, setLocalReports] = useState<TaskReport[]>(task.reports ?? [])
   const attachmentCount = task.attachments?.length ?? 0
   const commentCount = task.comments?.length ?? 0
   const deliverableCount = task.deliverables?.length ?? 0
+  const reportCount = localReports.length
   const linkCount = (task.blockedByDependencies?.length ?? 0) + (task.blockingDependencies?.length ?? 0)
   const saveDisabled = isPending || !canEdit || !task.assigneeId || !task.title.trim()
   const creatingProject = draftProjectValue === NEW_PROJECT_VALUE
@@ -284,7 +378,17 @@ export function TaskDetailSheet({
     setNewProjectMilestone('Delivery')
     setPlacementError(null)
     setPlacementSaved(false)
-  }, [task.id])
+    setReportTitle('')
+    setReportBody('')
+    setEmailToSupervisor(false)
+    setReportError(null)
+    setReportSaved(null)
+    setLocalReports(task.reports ?? [])
+  }, [task.id, currentUserDepartmentId, task.department?.id])
+
+  useEffect(() => {
+    setLocalReports(task.reports ?? [])
+  }, [task.reports])
 
   const placementDirty = useMemo(() => {
     if (creatingProject) return Boolean(newProjectTitle.trim())
@@ -358,11 +462,57 @@ export function TaskDetailSheet({
     void applyPlacement()
   }
 
+  async function handleSaveReport() {
+    if (!reportTitle.trim() || !reportBody.trim()) {
+      setReportError('Add a title and write the report before saving.')
+      return
+    }
+    setReportSaving(true)
+    setReportError(null)
+    const formData = new FormData()
+    formData.set('taskId', task.id)
+    formData.set('title', reportTitle.trim())
+    formData.set('body', reportBody.trim())
+    formData.set('emailToSupervisor', emailToSupervisor ? '1' : '0')
+    const result = await createTaskReport(formData)
+    setReportSaving(false)
+    if (result && 'error' in result && result.error) {
+      setReportError(result.error)
+      return
+    }
+    const currentUserPerson = people.find((person) => person.id === currentUserId)
+    const emailed = Boolean(result && 'emailed' in result && result.emailed)
+    const created: TaskReport = {
+      id: result && 'reportId' in result && result.reportId ? result.reportId : `local-${Date.now()}`,
+      title: reportTitle.trim(),
+      body: reportBody.trim(),
+      createdAt: new Date().toISOString(),
+      emailedAt: emailed ? new Date().toISOString() : null,
+      author: currentUserPerson
+        ? {
+            initials: currentUserPerson.initials,
+            firstName: currentUserPerson.firstName,
+            lastName: currentUserPerson.lastName,
+            avatarUrl: currentUserPerson.avatarUrl,
+            avatarColor: currentUserPerson.avatarColor,
+          }
+        : null,
+    }
+    const nextReports = [created, ...localReports]
+    setLocalReports(nextReports)
+    onReportsChange?.(nextReports)
+    setReportTitle('')
+    setReportBody('')
+    setEmailToSupervisor(false)
+    setReportSaved(emailed ? 'Report saved and emailed to your supervisor.' : 'Report saved.')
+  }
+
   const tabs: Array<{ id: TaskDetailTab; label: string; count?: number; icon: typeof ListChecks }> = [
     { id: 'overview', label: 'Overview', icon: ListChecks },
     { id: 'files', label: 'Files', count: attachmentCount, icon: Paperclip },
     { id: 'comments', label: 'Comments', count: commentCount, icon: MessageSquare },
     { id: 'delivery', label: 'Delivery', count: deliverableCount, icon: ListChecks },
+    { id: 'reports', label: 'Reports', count: reportCount, icon: FileText },
     { id: 'links', label: 'Links', count: linkCount, icon: GitBranch },
   ]
 
@@ -619,7 +769,7 @@ export function TaskDetailSheet({
                                 setNewProjectTitle(event.target.value)
                                 setPlacementSaved(false)
                               }}
-                              placeholder="e.g. WorkHub rollout"
+                              placeholder="e.g. Task Buddy rollout"
                               disabled={isPending || placementSaving}
                             />
                           </label>
@@ -962,6 +1112,116 @@ export function TaskDetailSheet({
                     </div>
                   ))}
                 </div>
+              )}
+            </section>
+          ) : null}
+
+          {detailTab === 'reports' ? (
+            <section className="td-section">
+              <header className="td-section-head">
+                <h3>Progress reports</h3>
+                <p>Capture what changed, what is blocked, and what you need — optionally notify your supervisor.</p>
+              </header>
+              {localReports.length > 0 ? (
+                <div className="td-report-list">
+                  {localReports.map((report) => (
+                    <article key={report.id} className="td-card td-report-card">
+                      <div className="td-card-top">
+                        <UserAvatar
+                          initials={report.author?.initials ?? 'G'}
+                          url={report.author?.avatarUrl}
+                          color={report.author?.avatarColor}
+                          size="sm"
+                        />
+                        <div>
+                          <strong>{report.title}</strong>
+                          <p className="td-report-body">{report.body}</p>
+                          <div className="td-report-meta">
+                            <span>{report.author ? fullName(report.author) : 'Author'}</span>
+                            <span>{formatRelative(new Date(report.createdAt))}</span>
+                            {report.emailedAt ? (
+                              <span className="td-report-emailed">
+                                <Mail aria-hidden="true" /> Supervisor notified
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="td-report-downloads">
+                        <button
+                          type="button"
+                          className="filter-pill"
+                          onClick={() => downloadReportTxt(report, task.title)}
+                        >
+                          <Download aria-hidden="true" /> .txt
+                        </button>
+                        <button
+                          type="button"
+                          className="filter-pill selected"
+                          onClick={() => downloadReportHtml(report, task.title)}
+                        >
+                          <Download aria-hidden="true" /> .html
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="td-empty">No reports yet. File your first update below.</p>
+              )}
+
+              {canProgress ? (
+                <div className="td-card td-report-compose">
+                  <h4>New report</h4>
+                  <label className="form-field">
+                    <span>Title</span>
+                    <input
+                      value={reportTitle}
+                      onChange={(event) => setReportTitle(event.target.value)}
+                      placeholder="e.g. Week 12 progress"
+                      disabled={reportSaving || isPending}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Report</span>
+                    <textarea
+                      value={reportBody}
+                      onChange={(event) => setReportBody(event.target.value)}
+                      placeholder="What moved forward, what is blocked, and what you need next."
+                      rows={6}
+                      disabled={reportSaving || isPending}
+                    />
+                  </label>
+                  <label className="td-report-email">
+                    <input
+                      type="checkbox"
+                      checked={emailToSupervisor}
+                      onChange={(event) => setEmailToSupervisor(event.target.checked)}
+                      disabled={reportSaving || isPending}
+                    />
+                    Email my supervisor
+                  </label>
+                  {reportError ? <p className="form-error">{reportError}</p> : null}
+                  {reportSaved ? <p className="form-ok">{reportSaved}</p> : null}
+                  <Button
+                    className="create-button"
+                    type="button"
+                    disabled={reportSaving || isPending || !reportTitle.trim() || !reportBody.trim()}
+                    onClick={() => void handleSaveReport()}
+                  >
+                    {reportSaving ? (
+                      <>
+                        <Loader2 className="spin-inline" aria-hidden="true" /> Saving…
+                      </>
+                    ) : emailToSupervisor ? (
+                      'Save & email supervisor'
+                    ) : (
+                      'Save report'
+                    )}
+                  </Button>
+                </div>
+              ) : (
+                <p className="td-muted">You can read reports on this task.</p>
               )}
             </section>
           ) : null}

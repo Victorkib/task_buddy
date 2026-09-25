@@ -4,10 +4,11 @@ import { getPasswordResetPreview } from '@/app/invite-actions'
 import { ResetPasswordForm } from '@/components/auth/reset-password-form'
 import { LoginHero } from '@/components/auth/login-hero'
 import { LoginLogo } from '@/components/auth/login-logo'
+import { PRODUCT_NAME, productTitle } from '@/lib/branding'
 
 export const metadata: Metadata = {
-  title: 'Reset password | GCS WorkHub',
-  description: 'Choose a new password for your GCS WorkHub account.',
+  title: productTitle('Reset password'),
+  description: `Choose a new password for your ${PRODUCT_NAME} account.`,
 }
 
 export const viewport: Viewport = {
@@ -39,7 +40,7 @@ export default async function ResetPasswordPage({
                 {'ok' in preview ? `Hi ${preview.firstName}` : 'Reset link unavailable'}
               </h2>
               <p className="mt-2 text-sm text-slate-400">
-                {'ok' in preview ? 'Choose a new password for your WorkHub account.' : preview.error}
+                {'ok' in preview ? `Choose a new password for your ${PRODUCT_NAME} account.` : preview.error}
               </p>
             </div>
             {'ok' in preview && preview.ok ? (

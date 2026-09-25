@@ -301,7 +301,7 @@ async function seed() {
   const [company] = await db
     .insert(companies)
     .values({
-      name: 'Globcons Consulting Services',
+      name: 'Globecon Convergence Solutions',
       shortName: 'GCS',
       tagline: 'Operational clarity for every team',
     })

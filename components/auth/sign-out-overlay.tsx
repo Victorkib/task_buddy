@@ -2,6 +2,7 @@
 
 import { useEffect, useSyncExternalStore } from 'react'
 import { LoginBrandMark } from '@/components/auth/login-logo'
+import { PRODUCT_NAME } from '@/lib/branding'
 import {
   getSigningOutServerSnapshot,
   getSigningOutSnapshot,
@@ -58,7 +59,7 @@ export function SignOutOverlay() {
         </div>
         <h1 className="text-lg font-semibold tracking-tight text-white">Signing you out</h1>
         <p className="mt-1.5 text-sm leading-relaxed text-slate-400">
-          Clearing your WorkHub session. This only takes a moment.
+          Clearing your {PRODUCT_NAME} session. This only takes a moment.
         </p>
         <div className="mt-5 h-1 w-40 overflow-hidden rounded-full bg-slate-500/20" aria-hidden="true">
           <span className="signout-bar-fill block h-full w-2/5 rounded-full bg-gradient-to-r from-blue-600 to-emerald-500" />

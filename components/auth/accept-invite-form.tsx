@@ -3,6 +3,7 @@
 import { useActionState, useMemo, useState } from 'react'
 import { Check, Eye, EyeOff, Loader2, Lock, ShieldCheck } from 'lucide-react'
 import { acceptInvite } from '@/app/invite-actions'
+import { PRODUCT_NAME } from '@/lib/branding'
 import Link from 'next/link'
 
 type AcceptState = { error?: string; ok?: true; signedIn?: false; email?: string }
@@ -54,7 +55,7 @@ export function AcceptInviteForm({
             <Check className="h-4 w-4" aria-hidden="true" />
             Account activated
           </div>
-          Welcome, {firstName}. Sign in with {state.email ?? email} to open WorkHub.
+          Welcome, {firstName}. Sign in with {state.email ?? email} to open {PRODUCT_NAME}.
         </div>
         <Link
           href="/login"
@@ -74,7 +75,7 @@ export function AcceptInviteForm({
         <p className="text-xs font-semibold tracking-[0.08em] text-slate-500 uppercase">Your account</p>
         <p className="mt-2 text-sm font-medium text-white">{email}</p>
         <p className="mt-1 text-xs text-slate-400">
-          {[jobTitle, departmentName].filter(Boolean).join(' · ') || 'GCS WorkHub'}
+          {[jobTitle, departmentName].filter(Boolean).join(' · ') || PRODUCT_NAME}
         </p>
       </div>
 
@@ -152,7 +153,7 @@ export function AcceptInviteForm({
             Activating…
           </>
         ) : (
-          'Activate and open WorkHub'
+          `Activate and open ${PRODUCT_NAME}`
         )}
       </button>
 

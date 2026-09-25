@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 import { ProfileWorkspace } from '@/components/profile-workspace'
 import { SetupScreen } from '@/components/setup-screen'
+import { COMPANY_LEGAL_NAME, PRODUCT_NAME, productTitle } from '@/lib/branding'
 import { isDatabaseConfigured } from '@/lib/db'
 import {
   getCompany,
@@ -15,8 +16,8 @@ import {
 import { isDepartmentLeader, isManagement } from '@/lib/auth/permissions'
 
 export const metadata: Metadata = {
-  title: 'Your profile | GCS WorkHub',
-  description: 'Update your photo, credentials, and alert preferences in GCS WorkHub.',
+  title: productTitle('Your profile'),
+  description: `Update your photo, credentials, and alert preferences in ${PRODUCT_NAME}.`,
 }
 
 function isNextRedirect(error: unknown) {
@@ -70,7 +71,7 @@ export default async function ProfilePage() {
               })
             : 'Not recorded'
         }
-        companyName={company?.name ?? 'GCS Operations'}
+        companyName={company?.name ?? COMPANY_LEGAL_NAME}
         currentUserRoles={currentUser.roles?.map((entry) => entry.role.key) ?? []}
         myTaskCount={overview.myTaskCount}
         canViewProjects={canViewProjects}

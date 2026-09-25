@@ -21,6 +21,7 @@ import {
 } from '@/app/actions'
 import { ProfileForm } from '@/components/profile-form'
 import { WorkhubShell, useCollapsedSidebar } from '@/components/workhub-shell'
+import { PRODUCT_NAME } from '@/lib/branding'
 import { signOutToLogin } from '@/lib/auth/sign-out-client'
 import {
   canManageOrg,
@@ -311,7 +312,7 @@ export function ProfileWorkspace({
             <p className="eyebrow">Account</p>
             <h1>Your profile</h1>
             <p className="subhead">
-              Photo, name, email, password, and alerts — changes show everywhere you appear in WorkHub.
+              Photo, name, email, password, and alerts — changes show everywhere you appear in {PRODUCT_NAME}.
             </p>
           </div>
         </div>

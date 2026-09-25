@@ -62,6 +62,7 @@ type DepartmentDetailProps = {
   tasks: DepartmentTask[]
   onOpenProject?: (projectId: string) => void
   onOpenTask?: (taskId: string) => void
+  onAssignTask?: (personId?: string) => void
   onInvite?: () => void
   onEditPerson?: (personId: string) => void
   onRemovePerson?: (personId: string) => void
@@ -123,6 +124,7 @@ export function DepartmentDetailBody({
   tasks,
   onOpenProject,
   onOpenTask,
+  onAssignTask,
   onInvite,
   onEditPerson,
   onRemovePerson,
@@ -222,8 +224,18 @@ export function DepartmentDetailBody({
                       </button>
                     ) : null}
                   </div>
-                ) : person.status !== 'invited' && (onEditPerson || onRemovePerson || onToggleStatus) ? (
+                ) : person.status !== 'invited' && (onEditPerson || onRemovePerson || onToggleStatus || onAssignTask) ? (
                   <div className="dept-person-actions">
+                    {onAssignTask ? (
+                      <button
+                        type="button"
+                        className="row-action"
+                        disabled={busy}
+                        onClick={() => onAssignTask(person.id)}
+                      >
+                        Assign task
+                      </button>
+                    ) : null}
                     {onEditPerson ? (
                       <button type="button" className="row-action" disabled={busy} onClick={() => onEditPerson(person.id)}>
                         Edit
@@ -291,7 +303,17 @@ export function DepartmentDetailBody({
       </section>
 
       <section className="dept-section">
-        <SectionHeading title="Standalone work" count={tasks.length} />
+        <SectionHeading
+          title="Standalone work"
+          count={tasks.length}
+          action={
+            onAssignTask ? (
+              <Button variant="outline" size="sm" onClick={() => onAssignTask()}>
+                <Plus data-icon="inline-start" /> Assign task
+              </Button>
+            ) : undefined
+          }
+        />
         <p className="dept-section-note">Open tasks that are not sitting under a project.</p>
         {tasks.length === 0 ? (
           <p className="empty-state empty-state-compact">No standalone tasks right now.</p>

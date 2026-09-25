@@ -12,6 +12,7 @@ type ProjectBits = {
 
 export function taskAccessFromRow(task: {
   assigneeId?: string | null
+  createdById?: string | null
   departmentId?: string | null
   projectId?: string | null
   assignee?: { departmentId?: string | null } | null
@@ -24,6 +25,7 @@ export function taskAccessFromRow(task: {
 
   return {
     assigneeId: task.assigneeId,
+    createdById: task.createdById ?? null,
     departmentId: task.departmentId,
     projectId: task.projectId,
     assigneeDepartmentId: task.assignee?.departmentId ?? null,

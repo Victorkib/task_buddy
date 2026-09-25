@@ -1,5 +1,6 @@
 import { BarChart3, ClipboardCheck, Shield, Users } from 'lucide-react'
 import { LoginLogo } from '@/components/auth/login-logo'
+import { COMPANY_SHORT_NAME, PRODUCT_NAME } from '@/lib/branding'
 
 const highlights = [
   {
@@ -10,7 +11,7 @@ const highlights = [
   {
     icon: Users,
     title: 'Projects and delivery',
-    description: 'Follow Kalimoni, Tender Watch, WorkHub, and every live client build in one place.',
+    description: `Follow Kalimoni, Tender Watch, ${PRODUCT_NAME}, and every live client build in one place.`,
   },
   {
     icon: BarChart3,
@@ -33,7 +34,7 @@ export function LoginHero() {
       <div className="relative space-y-8">
         <div>
           <h1 className="max-w-lg text-4xl font-semibold leading-tight tracking-tight text-white xl:text-5xl">
-            Operational clarity for GCS teams
+            Operational clarity for {COMPANY_SHORT_NAME} teams
           </h1>
           <p className="mt-4 max-w-md text-base leading-relaxed text-slate-400">
             One workspace for tasks, projects, and reporting — so every team can see ownership, deadlines, and progress without chasing updates.
@@ -57,7 +58,7 @@ export function LoginHero() {
 
       <div className="relative flex items-center gap-2 text-xs text-slate-500">
         <Shield className="h-3.5 w-3.5" aria-hidden="true" />
-        Secure access for authorized GCS personnel
+        Secure access for authorized {COMPANY_SHORT_NAME} personnel
       </div>
     </div>
   )

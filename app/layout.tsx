@@ -1,3 +1,4 @@
+import { PRODUCT_NAME, PRODUCT_TAGLINE, productTitle } from '@/lib/branding'
 import { Inter } from 'next/font/google'
 import type { Metadata, Viewport } from 'next'
 import { SignOutOverlay } from '@/components/auth/sign-out-overlay'
@@ -13,9 +14,9 @@ const inter = Inter({
 const metadataBase = getMetadataBase()
 
 export const metadata: Metadata = {
-  title: 'GCS WorkHub | Operational clarity for every team',
-  description: 'GCS WorkHub is the single source of truth for responsibilities, tasks, deadlines, and department progress.',
-  generator: 'GCS WorkHub',
+  title: productTitle(PRODUCT_TAGLINE),
+  description: `${PRODUCT_NAME} is the single source of truth for responsibilities, tasks, deadlines, and department progress at Globecon Convergence Solutions.`,
+  generator: PRODUCT_NAME,
   ...(metadataBase ? { metadataBase } : {}),
 }
 

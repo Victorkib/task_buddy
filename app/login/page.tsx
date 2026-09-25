@@ -4,12 +4,13 @@ import { LoginForm } from '@/components/auth/login-form'
 import { LoginHero } from '@/components/auth/login-hero'
 import { LoginLogo } from '@/components/auth/login-logo'
 import { LoginSignedOutNotice } from '@/components/auth/login-signed-out'
+import { PRODUCT_NAME, mailProductLabel, productTitle } from '@/lib/branding'
 import { getAuthSession } from '@/lib/auth/session'
 import { getUserById } from '@/lib/db/queries'
 
 export const metadata: Metadata = {
-  title: 'Sign in | GCS WorkHub',
-  description: 'Secure sign in to GCS WorkHub to manage work, projects, and collaboration.',
+  title: productTitle('Sign in'),
+  description: `Secure sign in to ${PRODUCT_NAME} to manage work, projects, and collaboration.`,
 }
 
 export const viewport: Viewport = {
@@ -76,7 +77,7 @@ export default async function LoginPage({
           </div>
 
           <p className="mt-6 text-center text-xs text-slate-600">
-            © 2026 GCS WorkHub. All rights reserved.
+            © 2026 {mailProductLabel()}. All rights reserved.
           </p>
         </div>
       </section>

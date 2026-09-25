@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { COMPANY_SHORT_NAME, PRODUCT_NAME } from '@/lib/branding'
 
 export function SetupScreen({
   missingSeed = false,
@@ -15,11 +16,11 @@ export function SetupScreen({
             <span>G</span>
           </div>
           <div>
-            <strong>GCS</strong>
-            <span>WorkHub</span>
+            <strong>{COMPANY_SHORT_NAME}</strong>
+            <span>{PRODUCT_NAME}</span>
           </div>
         </div>
-        <h1>{missingSeed ? 'Database is connected, but empty' : 'Let’s get WorkHub running'}</h1>
+        <h1>{missingSeed ? 'Database is connected, but empty' : `Let’s get ${PRODUCT_NAME} running`}</h1>
         <p>
           This workspace uses <strong>Neon Postgres</strong> with <strong>Drizzle ORM</strong>. Nothing else was already
           wired in, so this is the source of truth for people, responsibilities, and tasks.
@@ -31,7 +32,7 @@ export function SetupScreen({
               <li>
                 From the project folder run <code>pnpm db:seed</code>
               </li>
-              <li>Refresh this page to load the GCS workspace</li>
+              <li>Refresh this page to load the {COMPANY_SHORT_NAME} workspace</li>
             </>
           ) : (
             <>
@@ -42,7 +43,7 @@ export function SetupScreen({
                 Link this repo with <code>npx neon link</code> and create a project named <code>gcs-work-hub</code>
               </li>
               <li>
-                Apply the schema and sample GCS data with <code>pnpm db:setup</code>
+                Apply the schema and sample {COMPANY_SHORT_NAME} data with <code>pnpm db:setup</code>
               </li>
             </>
           )}

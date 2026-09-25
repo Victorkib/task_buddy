@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useTransition } from 'react'
 import { ArrowRightLeft, Trash2, X } from 'lucide-react'
 import { getPersonRemovalPreview, removePerson } from '@/app/invite-actions'
 import { Button } from '@/components/ui/button'
+import { PRODUCT_NAME } from '@/lib/branding'
 import { fullName } from '@/lib/format'
 import type { Person } from '@/lib/types'
 import type { PersonWorkload } from '@/lib/people/workload'
@@ -104,7 +105,7 @@ export function RemovePersonDialog({
         </div>
 
         <p className="confirm-copy">
-          This permanently deletes their WorkHub account and sign-in. They disappear from the people list and cannot
+          This permanently deletes their {PRODUCT_NAME} account and sign-in. They disappear from the people list and cannot
           log in again. Use <strong>Deactivate</strong> instead if you only need to pause access. Open ownership and
           approval records must be handed off first.
         </p>

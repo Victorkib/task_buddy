@@ -1,3 +1,4 @@
+import { mailProductLabel } from '@/lib/branding'
 import nodemailer from 'nodemailer'
 import type { Transporter } from 'nodemailer'
 import { getAppUrl } from '@/lib/env'
@@ -18,7 +19,7 @@ export function getGmailAppPassword() {
 }
 
 export function getMailFromName() {
-  return readEnv('GMAIL_FROM_NAME') ?? 'GCS WorkHub'
+  return readEnv('GMAIL_FROM_NAME') ?? mailProductLabel()
 }
 
 export function isMailConfigured() {

@@ -4,6 +4,7 @@ import { useActionState, useState, useSyncExternalStore, type FormEvent } from '
 import Link from 'next/link'
 import { Eye, EyeOff, Loader2, Lock, Mail, ShieldCheck } from 'lucide-react'
 import { authenticate, type LoginActionState } from '@/app/login/actions'
+import { COMPANY_SHORT_NAME, PRODUCT_NAME } from '@/lib/branding'
 
 const EMAIL_STORAGE_KEY = 'gcs-workhub-remember-email'
 const initialState: LoginActionState = {}
@@ -132,13 +133,13 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string }) {
             Signing in…
           </>
         ) : (
-          'Sign in to WorkHub'
+          `Sign in to ${PRODUCT_NAME}`
         )}
       </button>
 
       <p className="flex items-center justify-center gap-2 text-center text-xs text-slate-500">
         <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
-        Role-based access · GCS personnel only
+        Role-based access · {COMPANY_SHORT_NAME} personnel only
       </p>
 
       <p className="text-center text-xs text-slate-500">
@@ -146,7 +147,7 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string }) {
         <button
           className="text-slate-300 transition-colors hover:text-white"
           type="button"
-          onClick={() => setNotice('Ask your WorkHub administrator to provision your account.')}
+          onClick={() => setNotice(`Ask your ${PRODUCT_NAME} administrator to provision your account.`)}
         >
           Contact your administrator
         </button>

@@ -80,6 +80,7 @@ export function WorkhubShell({
   currentAvatarUrl,
   currentAvatarColor,
   companyName,
+  companyShortName = 'GCS',
   breadcrumb,
   profileNavActive = false,
   onOpenProfile,
@@ -113,6 +114,7 @@ export function WorkhubShell({
   currentAvatarUrl?: string | null
   currentAvatarColor?: string | null
   companyName: string
+  companyShortName?: string
   breadcrumb: string
   profileNavActive?: boolean
   onOpenProfile?: () => void
@@ -134,6 +136,7 @@ export function WorkhubShell({
   const [peek, setPeek] = useState(false)
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [openGroups, setOpenGroups] = useState<string[]>(() => groups.map((entry) => entry.group))
+  const [commandActiveIndex, setCommandActiveIndex] = useState(0)
   const railOpen = !collapsed || peek
 
   useEffect(() => {
@@ -141,6 +144,14 @@ export function WorkhubShell({
     if (!activeGroup) return
     setOpenGroups((current) => (current.includes(activeGroup) ? current : [...current, activeGroup]))
   }, [activeNav, groups])
+
+  useEffect(() => {
+    if (!commandOpen) {
+      setCommandActiveIndex(0)
+      return
+    }
+    setCommandActiveIndex(0)
+  }, [commandOpen, searchQuery, commandResults.length])
 
   function clearLeaveTimer() {
     if (leaveTimer.current) {
@@ -242,14 +253,15 @@ export function WorkhubShell({
             <BrandMark />
             <div>
               <strong>GCS</strong>
-              <span>WorkHub</span>
+              <span>Task Buddy</span>
             </div>
           </div>
-          <div className="workspace-chip">
-            <div className="workspace-icon">G</div>
-            <div>
+          <div className="workspace-chip" title={companyName}>
+            <div className="workspace-icon">{(companyShortName || companyName).slice(0, 1).toUpperCase()}</div>
+            <div className="workspace-chip-copy">
               <span>Workspace</span>
-              <strong>{companyName}</strong>
+              <strong className="workspace-name-full">{companyName}</strong>
+              <strong className="workspace-name-short">{companyShortName || 'GCS'}</strong>
             </div>
           </div>
           <nav className="primary-nav">{renderNav(onNavigate)}</nav>
@@ -299,7 +311,7 @@ export function WorkhubShell({
               <BrandMark />
               <div>
                 <strong>GCS</strong>
-                <span>WorkHub</span>
+                <span>Task Buddy</span>
               </div>
               <button className="close-button" type="button" aria-label="Close navigation" onClick={onMobileClose}>
                 <X aria-hidden={true} />
@@ -382,17 +394,52 @@ export function WorkhubShell({
                 onChange={(event) => onSearchChange(event.target.value)}
                 placeholder="Search tasks, people, projects, and views"
                 aria-label="Command search"
+                aria-activedescendant={
+                  commandResults[commandActiveIndex]
+                    ? `command-result-${commandResults[commandActiveIndex]!.id}`
+                    : undefined
+                }
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') {
+                    event.preventDefault()
+                    onCloseCommand()
+                    return
+                  }
+                  if (commandResults.length === 0) return
+                  if (event.key === 'ArrowDown') {
+                    event.preventDefault()
+                    setCommandActiveIndex((current) => (current + 1) % commandResults.length)
+                    return
+                  }
+                  if (event.key === 'ArrowUp') {
+                    event.preventDefault()
+                    setCommandActiveIndex((current) =>
+                      (current - 1 + commandResults.length) % commandResults.length,
+                    )
+                    return
+                  }
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    const active = commandResults[commandActiveIndex] ?? commandResults[0]
+                    if (active) onSelectCommand(active.id)
+                  }
+                }}
               />
+              <kbd className="command-hint">↑↓ Enter</kbd>
             </label>
-            <div className="command-results">
+            <div className="command-results" role="listbox" aria-label="Search results">
               {commandResults.length === 0 ? (
                 <p className="empty-state">No matches.</p>
               ) : (
-                commandResults.map((result) => (
+                commandResults.map((result, index) => (
                   <button
                     key={result.id}
+                    id={`command-result-${result.id}`}
                     type="button"
-                    className="command-result"
+                    role="option"
+                    aria-selected={index === commandActiveIndex}
+                    className={`command-result${index === commandActiveIndex ? ' is-active' : ''}`}
+                    onMouseEnter={() => setCommandActiveIndex(index)}
                     onClick={() => onSelectCommand(result.id)}
                   >
                     <strong>{result.label}</strong>

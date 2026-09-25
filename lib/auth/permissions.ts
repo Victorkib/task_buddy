@@ -65,11 +65,26 @@ export function canManageUsers(user: Actor) {
 }
 
 export function canCreateWork(user: Actor) {
+  return hasRole(user, ['admin', 'managing_director', 'department_head', 'manager', 'employee'])
+}
+
+/** Full company-wide create (projects across depts, org structure work). */
+export function canCreateCompanyWork(user: Actor) {
   return hasRole(user, ['admin', 'managing_director', 'department_head', 'manager'])
+}
+
+/** Assign work onto colleagues — leaders and management only, not ICs. */
+export function canAssignDepartmentWork(user: Actor) {
+  return isManagement(user) || isDepartmentLeader(user)
 }
 
 export function canCreateProjects(user: Actor) {
   return canCreateWork(user)
+}
+
+/** Employees may create work only inside their own department. */
+export function isDepartmentMemberCreator(user: Actor) {
+  return hasRole(user, ['employee']) && Boolean(user?.departmentId) && !canCreateCompanyWork(user)
 }
 
 export function canViewCompanyReports(user: Actor) {
@@ -113,6 +128,7 @@ export function canInvite(
 
 export type TaskAccess = {
   assigneeId?: string | null
+  createdById?: string | null
   departmentId?: string | null
   projectId?: string | null
   assigneeDepartmentId?: string | null
@@ -168,7 +184,12 @@ export function canEditTask(user: Actor, task: TaskAccess) {
 }
 
 export function canDeleteTask(user: Actor, task: TaskAccess) {
-  return canEditTask(user, task)
+  if (!user) return false
+  if (isManagement(user) || isDepartmentLeader(user)) return canEditTask(user, task)
+  // Individual contributors may remove work they originated — not lead-assigned work.
+  if (task.createdById && task.createdById !== user.id) return false
+  if (task.assigneeId !== user.id) return false
+  return true
 }
 
 export function canEditTaskActor(user: Actor, task: TaskAccess) {

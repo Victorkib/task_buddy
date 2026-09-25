@@ -47,6 +47,8 @@ type Project = {
   description?: string | null
   owner: string
   ownerId?: string
+  partnerId?: string | null
+  partner?: string | null
   departmentId?: string | null
   department?: string | null
   projectStatus?: string
@@ -118,6 +120,7 @@ export function ProjectWorkspace({
   tasks,
   canManage,
   canCreateWork,
+  lockLeadToSelf = false,
   onBack,
   onCreateTask,
   onOpenTask,
@@ -132,6 +135,7 @@ export function ProjectWorkspace({
   tasks: WorkspaceTask[]
   canManage: boolean
   canCreateWork: boolean
+  lockLeadToSelf?: boolean
   onBack: () => void
   onCreateTask: (milestoneId: string) => void
   onOpenTask: (taskId: string) => void
@@ -147,6 +151,7 @@ export function ProjectWorkspace({
   const [description, setDescription] = useState(project.description ?? '')
   const [projectStatus, setProjectStatus] = useState(project.projectStatus ?? 'active')
   const [ownerId, setOwnerId] = useState(project.ownerId ?? '')
+  const [partnerId, setPartnerId] = useState(project.partnerId ?? '')
   const [departmentId, setDepartmentId] = useState(project.departmentId ?? '')
   const [milestoneTitle, setMilestoneTitle] = useState('')
   const [milestoneStart, setMilestoneStart] = useState('')
@@ -163,6 +168,7 @@ export function ProjectWorkspace({
     setDescription(project.description ?? '')
     setProjectStatus(project.projectStatus ?? 'active')
     setOwnerId(project.ownerId ?? '')
+    setPartnerId(project.partnerId ?? '')
     setDepartmentId(project.departmentId ?? '')
     setLinkMilestoneId((current) =>
       project.milestones?.some((milestone) => milestone.id === current)
@@ -188,6 +194,7 @@ export function ProjectWorkspace({
   const defaultMilestoneId = project.milestones?.[0]?.id ?? ''
   const canAddMilestone =
     Boolean(milestoneTitle.trim()) && datesAreValid(milestoneStart, milestoneDue)
+  const leadPerson = people.find((person) => person.id === ownerId)
   const canSaveProject = Boolean(title.trim() && ownerId && departmentId)
   const canLinkTask = Boolean(linkTaskId)
   const canLinkExisting = canManage || canCreateWork
@@ -214,6 +221,7 @@ export function ProjectWorkspace({
             <h1>{project.title}</h1>
             <p>
               {ledBy(project.owner)}
+              {project.partner ? ` · Partner: ${project.partner}` : ''}
               {project.department ? ` · Home: ${project.department}` : ''}
               {(project.contributingDepartments ?? []).length > 0
                 ? ` · Contributing: ${project.contributingDepartments?.map((entry) => entry.name).join(', ')}`
@@ -303,6 +311,7 @@ export function ProjectWorkspace({
                   description,
                   status: projectStatus as 'active' | 'paused' | 'completed' | 'archived',
                   ownerId,
+                  partnerId: partnerId || null,
                   departmentId,
                 }),
               )
@@ -323,24 +332,64 @@ export function ProjectWorkspace({
             </label>
             <label>
               Led by
-              <select value={ownerId} onChange={(event) => setOwnerId(event.target.value)}>
-                {people.map((person) => (
-                  <option key={person.id} value={person.id}>
-                    {person.firstName} {person.lastName}
-                    {person.jobTitle ? ` · ${person.jobTitle}` : ''}
-                  </option>
-                ))}
+              {lockLeadToSelf ? (
+                <>
+                  <input
+                    value={leadPerson ? `${leadPerson.firstName} ${leadPerson.lastName}` : project.owner}
+                    readOnly
+                    aria-readonly="true"
+                  />
+                  <span className="field-hint">You stay the project lead. Ask a manager or head to reassign leadership.</span>
+                </>
+              ) : (
+                <select
+                  value={ownerId}
+                  onChange={(event) => {
+                    const next = event.target.value
+                    setOwnerId(next)
+                    if (partnerId === next) setPartnerId('')
+                  }}
+                >
+                  {people.map((person) => (
+                    <option key={person.id} value={person.id}>
+                      {person.firstName} {person.lastName}
+                      {person.jobTitle ? ` · ${person.jobTitle}` : ''}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </label>
+            <label>
+              Lead partner
+              <select value={partnerId} onChange={(event) => setPartnerId(event.target.value)}>
+                <option value="">Optional co-lead</option>
+                {people
+                  .filter((person) => person.id !== ownerId)
+                  .map((person) => (
+                    <option key={person.id} value={person.id}>
+                      {person.firstName} {person.lastName}
+                      {person.jobTitle ? ` · ${person.jobTitle}` : ''}
+                    </option>
+                  ))}
               </select>
+              <span className="field-hint">Delivery co-owner only — not a reporting-line change.</span>
             </label>
             <label>
               Home department
-              <select value={departmentId} onChange={(event) => setDepartmentId(event.target.value)}>
+              <select
+                value={departmentId}
+                disabled={lockLeadToSelf}
+                onChange={(event) => setDepartmentId(event.target.value)}
+              >
                 {departments.map((department) => (
                   <option key={department.id} value={department.id}>
                     {department.name}
                   </option>
                 ))}
               </select>
+              {lockLeadToSelf ? (
+                <span className="field-hint">Projects you create stay in your department.</span>
+              ) : null}
             </label>
             <label className="span-2">
               Description

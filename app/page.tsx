@@ -2,6 +2,7 @@ import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import WorkhubDashboardDB from '@/components/workhub-dashboard-db'
 import { SetupScreen } from '@/components/setup-screen'
+import { COMPANY_LEGAL_NAME, COMPANY_SHORT_NAME } from '@/lib/branding'
 import { isDatabaseConfigured } from '@/lib/db'
 import { getDashboardData, getSettingsData, getWorkspaceContext } from '@/lib/db/queries'
 import type { ComponentProps } from 'react'
@@ -25,7 +26,8 @@ export default async function Page({
 
   try {
     const { currentUser, people, directory, departmentDirectory, company } = await getWorkspaceContext()
-    const companyName = company?.name ?? 'GCS Operations'
+    const companyName = company?.name ?? COMPANY_LEGAL_NAME
+    const companyShortName = company?.shortName ?? COMPANY_SHORT_NAME
     if (!company) {
       return <SetupScreen missingSeed />
     }
@@ -69,6 +71,7 @@ export default async function Page({
           workspaceRoles={settings?.roles ?? []}
           workspaceTeams={settings?.teams ?? []}
           companyName={companyName}
+          companyShortName={companyShortName}
         />
       </Suspense>
     )

@@ -10,7 +10,7 @@ import type { Person } from '@/lib/types'
 
 const STEPS = [
   { id: 1, label: 'Basics' },
-  { id: 2, label: 'Lead' },
+  { id: 2, label: 'Lead & partner' },
   { id: 3, label: 'Timeline' },
   { id: 4, label: 'Team' },
 ] as const
@@ -44,12 +44,15 @@ export function CreateProjectDialog({
   directory = people,
   currentUserId,
   departments,
+  lockLeadToSelf = false,
   onClose,
 }: {
   people: Person[]
   directory?: Person[]
   currentUserId: string
   departments: DepartmentOption[]
+  /** Employees lead their own projects — hierarchy stays with managers/heads. */
+  lockLeadToSelf?: boolean
   onClose: (projectId?: string) => void
 }) {
   const [error, setError] = useState<string | null>(null)
@@ -57,6 +60,7 @@ export function CreateProjectDialog({
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [ownerId, setOwnerId] = useState(currentUserId)
+  const [partnerId, setPartnerId] = useState('')
   const [departmentId, setDepartmentId] = useState('')
   const [status, setStatus] = useState('active')
   const [milestoneTitle, setMilestoneTitle] = useState('Delivery')
@@ -66,6 +70,10 @@ export function CreateProjectDialog({
   const [contributingDepartmentIds, setContributingDepartmentIds] = useState<string[]>([])
 
   const owner = people.find((person) => person.id === ownerId) ?? directory.find((person) => person.id === ownerId)
+  const partner =
+    partnerId
+      ? people.find((person) => person.id === partnerId) ?? directory.find((person) => person.id === partnerId)
+      : null
   const department = departments.find((entry) => entry.id === departmentId)
   const allowedDepartmentIds = useMemo(() => {
     const ids = new Set<string>()
@@ -85,15 +93,29 @@ export function CreateProjectDialog({
     () => (departmentId ? people.filter((person) => personDepartmentId(person) === departmentId) : people),
     [departmentId, people],
   )
+  const partnerPool = useMemo(() => {
+    const source = departmentPeople.length > 0 ? departmentPeople : people
+    return source.filter((person) => person.id !== ownerId)
+  }, [departmentPeople, people, ownerId])
 
   function applyDepartment(nextId: string) {
     setDepartmentId(nextId)
+    if (lockLeadToSelf) {
+      setOwnerId(currentUserId)
+      setPartnerId((current) => (current && current !== currentUserId ? current : ''))
+      const members = people.filter((person) => personDepartmentId(person) === nextId)
+      const nextTeam = new Set(members.map((person) => person.id))
+      nextTeam.add(currentUserId)
+      setTeamIds([...nextTeam])
+      return
+    }
     const named = departments.find((entry) => entry.id === nextId)?.owner
     const members = people.filter((person) => personDepartmentId(person) === nextId)
     const lead =
       members.find((person) => person.firstName === named?.firstName && person.lastName === named?.lastName) ??
       members[0]
     if (lead) setOwnerId(lead.id)
+    setPartnerId((current) => (current && current !== lead?.id ? current : ''))
     const nextTeam = new Set(members.map((person) => person.id))
     nextTeam.add(lead?.id ?? currentUserId)
     setTeamIds([...nextTeam])
@@ -126,14 +148,15 @@ export function CreateProjectDialog({
   async function action(formData: FormData) {
     formData.set('title', title.trim())
     formData.set('description', description)
-    formData.set('ownerId', ownerId)
+    formData.set('ownerId', lockLeadToSelf ? currentUserId : ownerId)
+    formData.set('partnerId', partnerId)
     formData.set('departmentId', departmentId)
     formData.set('status', status)
     formData.set('milestoneTitle', milestoneTitle.trim() || 'Delivery')
     formData.set('startDate', startDate)
     formData.set('dueDate', dueDate)
     formData.delete('teamUserIds')
-    const uniqueTeam = new Set([...teamIds, ownerId])
+    const uniqueTeam = new Set([...teamIds, ownerId, ...(partnerId ? [partnerId] : [])])
     for (const id of uniqueTeam) formData.append('teamUserIds', id)
     formData.delete('contributingDepartmentIds')
     for (const id of contributingDepartmentIds) formData.append('contributingDepartmentIds', id)
@@ -219,25 +242,60 @@ export function CreateProjectDialog({
                 </label>
                 <label>
                   Led by
+                  {lockLeadToSelf ? (
+                    <>
+                      <input
+                        value={owner ? `${owner.firstName} ${owner.lastName}` : 'You'}
+                        readOnly
+                        aria-readonly="true"
+                      />
+                      <span className="field-hint">You lead projects you create. Managers and heads assign leads for the department.</span>
+                    </>
+                  ) : (
+                    <select
+                      value={ownerId}
+                      onChange={(event) => {
+                        const next = event.target.value
+                        setOwnerId(next)
+                        setTeamIds((current) => (current.includes(next) ? current : [...current, next]))
+                        if (partnerId === next) setPartnerId('')
+                      }}
+                    >
+                      {(departmentPeople.length > 0 ? departmentPeople : people).map((person) => (
+                        <option key={person.id} value={person.id}>
+                          {person.firstName} {person.lastName}
+                          {person.jobTitle ? ` · ${person.jobTitle}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </label>
+                <label>
+                  Lead partner
                   <select
-                    value={ownerId}
+                    value={partnerId}
                     onChange={(event) => {
                       const next = event.target.value
-                      setOwnerId(next)
-                      setTeamIds((current) => (current.includes(next) ? current : [...current, next]))
+                      setPartnerId(next)
+                      if (next) {
+                        setTeamIds((current) => (current.includes(next) ? current : [...current, next]))
+                      }
                     }}
                   >
-                    {(departmentPeople.length > 0 ? departmentPeople : people).map((person) => (
+                    <option value="">Optional co-lead</option>
+                    {partnerPool.map((person) => (
                       <option key={person.id} value={person.id}>
                         {person.firstName} {person.lastName}
                         {person.jobTitle ? ` · ${person.jobTitle}` : ''}
                       </option>
                     ))}
                   </select>
+                  <span className="field-hint">Delivery co-owner only — not a reporting-line change.</span>
                 </label>
                 {department && (
                   <p className="task-assign-preview" style={{ gridColumn: '1 / -1' }}>
-                    {ledBy(owner ? `${owner.firstName} ${owner.lastName}` : null)} in {department.name}.
+                    {ledBy(owner ? `${owner.firstName} ${owner.lastName}` : null)}
+                    {partner ? ` with ${partner.firstName} ${partner.lastName}` : ''} in {department.name}.
                     Team members from this department are suggested next.
                   </p>
                 )}
@@ -272,7 +330,9 @@ export function CreateProjectDialog({
             {step === 4 && (
               <>
                 <p className="task-assign-preview" style={{ marginBottom: 12 }}>
-                  {title.trim() || 'Untitled'} · {department?.name ?? 'No department'} · {ledBy(owner ? `${owner.firstName} ${owner.lastName}` : null)}
+                  {title.trim() || 'Untitled'} · {department?.name ?? 'No department'} ·{' '}
+                  {ledBy(owner ? `${owner.firstName} ${owner.lastName}` : null)}
+                  {partner ? ` · Partner: ${partner.firstName} ${partner.lastName}` : ''}
                 </p>
                 <fieldset className="team-picker">
                   <legend>Contributing departments</legend>

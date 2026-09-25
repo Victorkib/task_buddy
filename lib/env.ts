@@ -1,3 +1,5 @@
+import { mailProductLabel } from '@/lib/branding'
+
 function readEnv(name: string) {
   const value = process.env[name]
   if (value == null) return undefined
@@ -59,5 +61,5 @@ export function getGmailAppPassword() {
 }
 
 export function getMailFromName() {
-  return readEnv('GMAIL_FROM_NAME') ?? 'GCS WorkHub'
+  return readEnv('GMAIL_FROM_NAME') ?? mailProductLabel()
 }

@@ -13,6 +13,7 @@ import {
 } from '@/app/actions'
 import { FileDropzone } from '@/components/uploads/file-dropzone'
 import { UserAvatar } from '@/components/user-avatar'
+import { PRODUCT_NAME } from '@/lib/branding'
 import { AVATAR_COLORS } from '@/lib/constants'
 import { signOutToLogin } from '@/lib/auth/sign-out-client'
 
@@ -130,7 +131,7 @@ export function ProfileForm({
         <div className="panel-heading">
           <div>
             <h2>Workspace identity</h2>
-            <p>This is how colleagues see you across WorkHub.</p>
+            <p>This is how colleagues see you across {PRODUCT_NAME}.</p>
           </div>
         </div>
         <form

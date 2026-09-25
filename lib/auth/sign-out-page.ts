@@ -1,3 +1,5 @@
+import { PRODUCT_NAME } from '@/lib/branding'
+
 const MARK_SVG = `<svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
   <path d="M15.2 7.2h11.4l5.7 9.9-5.7 9.9H15.2L9.5 17.1 15.2 7.2Z" stroke="#60a5fa" stroke-width="3.6" stroke-linejoin="round"/>
   <path d="M21.4 21h11.4l5.7 9.9-5.7 9.9H21.4l-5.7-9.9L21.4 21Z" stroke="#22c55e" stroke-width="3.6" stroke-linejoin="round"/>
@@ -19,7 +21,7 @@ export function buildSignOutPageHtml(redirectTo: string) {
   <meta name="color-scheme" content="dark" />
   <meta name="theme-color" content="#020617" />
   <meta http-equiv="refresh" content="0;url=${safeRedirect}" />
-  <title>Signing out · GCS WorkHub</title>
+  <title>Signing out · ${PRODUCT_NAME}</title>
   <style>
     :root { color-scheme: dark; }
     * { box-sizing: border-box; }
@@ -51,7 +53,7 @@ export function buildSignOutPageHtml(redirectTo: string) {
     .grid {
       background-image:
         linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);
+        linear-gradient(90deg,rgba(255,255,255,.03) 1px, transparent 1px);
       background-size: 48px 48px;
     }
     .glow::before, .glow::after {
@@ -160,7 +162,7 @@ export function buildSignOutPageHtml(redirectTo: string) {
       </div>
       <div>
         <h1>Signing you out</h1>
-        <p>Clearing your WorkHub session. This only takes a moment.</p>
+        <p>Clearing your ${PRODUCT_NAME} session. This only takes a moment.</p>
       </div>
       <div class="bar" aria-hidden="true"><i></i></div>
     </div>

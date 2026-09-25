@@ -34,7 +34,7 @@ import { StatusBadge } from '@/components/status-badge'
 import { CreateTaskDialog } from '@/components/create-task-dialog'
 import { CreateProjectDialog } from '@/components/create-project-dialog'
 import { CreateResponsibilityDialog } from '@/components/create-responsibility-dialog'
-import { TaskDetailSheet, type TaskDetailTab } from '@/components/task-detail-sheet'
+import { TaskDetailSheet, type TaskDetailTab, type TaskReportEntry } from '@/components/task-detail-sheet'
 import { InviteEmployeeDialog } from '@/components/invite-employee-dialog'
 import { OrgSettingsPanel } from '@/components/org-settings-panel'
 import { ProjectWorkspace } from '@/components/project-workspace'
@@ -56,6 +56,8 @@ import {
 } from '@/lib/department-view'
 import {
   canCreateWork as roleCanCreateWork,
+  canAssignDepartmentWork as roleCanAssignDepartmentWork,
+  isDepartmentMemberCreator as roleIsDepartmentMemberCreator,
   canDeleteTask,
   canEditTask,
   canProgressTask,
@@ -74,6 +76,7 @@ import {
   deleteAttachment,
   deleteComment,
   deleteTask,
+  deleteTasks,
   deleteTaskDependency,
   createTaskDependency,
   approveTask,
@@ -107,6 +110,7 @@ import { RemovePersonDialog } from '@/components/remove-person-dialog'
 import { EditPersonDialog } from '@/components/edit-person-dialog'
 import type { Person } from '@/lib/types'
 import { taskCategoryEnum, taskPriorityEnum, taskStatusEnum } from '@/lib/db/schema'
+import { PRODUCT_NAME } from '@/lib/branding'
 
 type View = WorkspaceView
 
@@ -144,6 +148,7 @@ type DbTask = {
   status: TaskStatus
   progress?: number
   assigneeId?: string | null
+  createdById?: string | null
   dueDate: string | Date | null
   startDate?: string | Date | null
   assignee: { initials: string; firstName: string; lastName: string; avatarUrl?: string | null; avatarColor?: string | null } | null
@@ -185,6 +190,14 @@ type DbTask = {
   blockedByDependencies?: Array<{
     id: string
     blockingTask: { id: string; title: string; status: TaskStatus; dueDate: string | Date | null }
+  }>
+  reports?: Array<{
+    id: string
+    title: string
+    body: string
+    createdAt: string | Date
+    emailedAt?: string | Date | null
+    author: { initials: string; firstName: string; lastName: string; avatarUrl?: string | null; avatarColor?: string | null } | null
   }>
 }
 
@@ -394,6 +407,8 @@ type DbProject = {
   unscheduledTaskIds?: string[]
   departmentId?: string | null
   department?: string | null
+  partnerId?: string | null
+  partner?: string | null
   contributingDepartments?: Array<{ id: string; name: string }>
   participation?: 'home' | 'contributing' | 'member'
   projectStatus?: string
@@ -501,21 +516,43 @@ export default function WorkhubDashboardDB({
   workspaceRoles = [],
   workspaceTeams = [],
   companyName = 'GCS Operations',
+  companyShortName = 'GCS',
 }: {
   initialTasks: DbTask[]
   initialDepartments: DbDepartment[]
   initialActivity: DbActivityEvent[]
   upcoming: DbTask[]
-  metrics: Metrics
+  metrics: {
+    active: number
+    dueThisWeek: number
+    dueToday: number
+    attention: number
+    overdue: number
+    blocked: number
+    completionRate: number
+    departments: number
+  }
   people: Employee[]
   directory?: Employee[]
-  departmentDirectory?: Array<{ id: string; name: string; owner?: { firstName: string; lastName: string } | null }>
+  departmentDirectory?: DbDepartment[]
   responsibilities: DbResponsibility[]
   allActivity: DbActivityEvent[]
   myTasks: DbTask[]
   myMetrics: { assigned: number; inProgress: number; completed: number }
   projects: DbProject[]
-  reportMetrics: { completionRate: number; overdue: number; activeProjects: number; teamCoverage: number }
+  reportMetrics: {
+    completionRate: number
+    overdue: number
+    blocked: number
+    dueToday?: number
+    dueThisWeek?: number
+    active?: number
+    attention?: number
+    activeProjects: number
+    teamCoverage: number
+    departments: Array<{ id: string; name: string; progress: number; color?: string; total: number; completed: number }>
+    peopleLoad?: Array<{ id: string; name: string; initials: string; active: number; overdue: number }>
+  }
   currentUserId: string
   currentUserRoles: string[]
   initialView?: View
@@ -527,6 +564,7 @@ export default function WorkhubDashboardDB({
   workspaceRoles?: { key: string; name: string; description?: string | null }[]
   workspaceTeams?: { id: string; name: string; departmentId?: string; department?: { name: string } | null }[]
   companyName?: string
+  companyShortName?: string
 }) {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -555,6 +593,11 @@ export default function WorkhubDashboardDB({
   const [reminderMessage, setReminderMessage] = useState('')
   const [reminderTargetId, setReminderTargetId] = useState('')
   const [showCreate, setShowCreate] = useState(false)
+  const [createAssigneeId, setCreateAssigneeId] = useState('')
+  const [createFromDepartment, setCreateFromDepartment] = useState(false)
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(() => new Set())
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false)
+  const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null)
   const [createTaskMilestoneId, setCreateTaskMilestoneId] = useState('')
   const [showCreateProject, setShowCreateProject] = useState(false)
   const [showCreateResp, setShowCreateResp] = useState(false)
@@ -597,6 +640,18 @@ export default function WorkhubDashboardDB({
     setClockLabel(formatLongDate())
     setHello(greeting())
   }, [])
+
+  useEffect(() => {
+    setTasks(initialTasks)
+  }, [initialTasks])
+
+  useEffect(() => {
+    setSelectedTaskIds((current) => {
+      const valid = new Set(tasks.map((task) => task.id))
+      const next = new Set([...current].filter((id) => valid.has(id)))
+      return next.size === current.size ? current : next
+    })
+  }, [tasks])
   const activePeople = useMemo(
     () => people.filter((person) => person.status !== 'inactive'),
     [people],
@@ -644,6 +699,8 @@ export default function WorkhubDashboardDB({
   const isManagement = roleSet.has('admin') || roleSet.has('managing_director')
   const isDepartmentLeader = roleSet.has('department_head') || roleSet.has('manager')
   const canCreateWork = roleCanCreateWork(actor)
+  const canAssignDepartmentWork = roleCanAssignDepartmentWork(actor)
+  const isMemberCreator = roleIsDepartmentMemberCreator(actor)
   const canLogOwnTask = canSelfCreateTask(actor)
   const sponsoredDesk = isSponsoredContributor(actor)
   const sponsorName = currentUser?.manager
@@ -792,6 +849,22 @@ export default function WorkhubDashboardDB({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  useEffect(() => {
+    const deepTaskId = searchParams.get('task')
+    if (!deepTaskId) return
+    const match =
+      tasks.find((task) => task.id === deepTaskId) ??
+      initialMyTasks.find((task) => task.id === deepTaskId) ??
+      null
+    if (!match) return
+    setSelectedTask(match)
+    setDetailTab('reports')
+    const params = new URLSearchParams(searchParams.toString())
+    params.delete('task')
+    const next = params.toString()
+    router.replace(next ? `/?${next}` : '/', { scroll: false })
+  }, [searchParams, tasks, initialMyTasks, router])
 
   const currentView = activeNav
   const currentProjectId = selectedProjectId
@@ -1126,6 +1199,57 @@ export default function WorkhubDashboardDB({
       setDeleteTaskConfirm(null)
       removeTaskFromLocalState(taskId)
       router.refresh()
+    })
+  }
+
+  function handleBulkDeleteTasks() {
+    const ids = [...selectedTaskIds]
+    if (ids.length === 0) return
+    startTransition(async () => {
+      setBulkDeleteError(null)
+      const res = await deleteTasks(ids)
+      if (res && 'error' in res && res.error) {
+        setBulkDeleteError(res.error)
+        return
+      }
+      setBulkDeleteConfirm(false)
+      setSelectedTaskIds(new Set())
+      setTasks((current) => current.filter((task) => !ids.includes(task.id)))
+      setSelectedTask((current) => (current && ids.includes(current.id) ? null : current))
+      router.refresh()
+    })
+  }
+
+  function openCreateTaskFromDepartment(personId?: string) {
+    setCreateAssigneeId(personId ?? '')
+    setCreateFromDepartment(true)
+    setCreateTaskMilestoneId('')
+    setShowCreate(true)
+  }
+
+  function mergeTaskReports(taskId: string, reports: TaskReportEntry[]) {
+    const normalized = reports.map((report) => ({
+      ...report,
+      author: report.author
+        ? {
+            initials: report.author.initials ?? 'G',
+            firstName: report.author.firstName,
+            lastName: report.author.lastName,
+            avatarUrl: report.author.avatarUrl,
+            avatarColor: report.author.avatarColor,
+          }
+        : null,
+    }))
+    setTasks((current) => current.map((entry) => (entry.id === taskId ? { ...entry, reports: normalized } : entry)))
+    setSelectedTask((current) => (current?.id === taskId ? { ...current, reports: normalized } : current))
+  }
+
+  function toggleTaskSelected(taskId: string, selected: boolean) {
+    setSelectedTaskIds((current) => {
+      const next = new Set(current)
+      if (selected) next.add(taskId)
+      else next.delete(taskId)
+      return next
     })
   }
 
@@ -1598,7 +1722,15 @@ export default function WorkhubDashboardDB({
     [initialMyTasks],
   )
 
-  const renderTasks = (title = 'Task workload', subtitle = "Your team's most recent work activity") => (
+  const deletablePagedTasks = useMemo(
+    () => pagedTasks.filter((task) => canDeleteTask(actor, task)),
+    [pagedTasks, actor],
+  )
+  const allPagedDeletableSelected =
+    deletablePagedTasks.length > 0 && deletablePagedTasks.every((task) => selectedTaskIds.has(task.id))
+  const selectedCount = selectedTaskIds.size
+
+  const renderTasks = (title = 'Task workload', subtitle = `Recent work activity in ${PRODUCT_NAME}`) => (
     <section className="panel task-panel" id="task-workload">
       <div className="panel-heading">
         <div>
@@ -1632,13 +1764,51 @@ export default function WorkhubDashboardDB({
           View all <ArrowUpRight aria-hidden="true" />
         </button>
       </div>
+      {deletablePagedTasks.length > 0 ? (
+        <div className="task-list-select-all">
+          <label className="task-select">
+            <input
+              type="checkbox"
+              aria-label="Select all deletable tasks on this page"
+              checked={allPagedDeletableSelected}
+              onChange={(event) => {
+                const checked = event.target.checked
+                setSelectedTaskIds((current) => {
+                  const next = new Set(current)
+                  for (const task of deletablePagedTasks) {
+                    if (checked) next.add(task.id)
+                    else next.delete(task.id)
+                  }
+                  return next
+                })
+              }}
+            />
+          </label>
+          <span>Select deletable tasks on this page</span>
+        </div>
+      ) : null}
       <div className="task-list">
-        {pagedTasks.map((task) => (
+        {pagedTasks.map((task) => {
+          const canDelete = canDeleteTask(actor, task)
+          const isSelected = selectedTaskIds.has(task.id)
+          return (
           <div
-            className={`task-row task-row-clickable ${taskRowStatusClass(task.status)}`}
+            className={`task-row task-row-clickable ${taskRowStatusClass(task.status)}${isSelected ? ' is-selected' : ''}`}
             key={task.id}
             onClick={() => setSelectedTask(task)}
           >
+            {canDelete ? (
+              <label className="task-select" onClick={(event) => event.stopPropagation()}>
+                <input
+                  type="checkbox"
+                  aria-label={`Select ${task.title}`}
+                  checked={isSelected}
+                  onChange={(event) => toggleTaskSelected(task.id, event.target.checked)}
+                />
+              </label>
+            ) : (
+              <span className="task-select" aria-hidden="true" />
+            )}
             <div className={`priority-bar priority-${task.priority}`} />
             <div className="task-main">
               <strong>{task.title}</strong>
@@ -1698,7 +1868,7 @@ export default function WorkhubDashboardDB({
               <Check aria-hidden="true" />
             </button>
           </div>
-        ))}
+        )})}
         {visibleTasks.length === 0 && (
           <div className="empty-state">
             {canLogOwnTask && activeNav === 'My tasks' && !allWorkScope && filter === 'All' ? (
@@ -1765,6 +1935,22 @@ export default function WorkhubDashboardDB({
             >
               <ChevronRight aria-hidden="true" />
             </button>
+          </div>
+        </div>
+      ) : null}
+      {selectedCount > 0 ? (
+        <div className="task-bulk-bar" role="status">
+          <p>
+            <strong>{selectedCount}</strong> selected
+          </p>
+          <div className="task-bulk-actions">
+            <button type="button" className="filter-pill" onClick={() => setSelectedTaskIds(new Set())}>
+              Clear
+            </button>
+            <Button variant="destructive" type="button" disabled={isPending} onClick={() => setBulkDeleteConfirm(true)}>
+              <Trash2 data-icon="inline-start" aria-hidden="true" />
+              Delete {selectedCount}
+            </Button>
           </div>
         </div>
       ) : null}
@@ -1994,6 +2180,7 @@ export default function WorkhubDashboardDB({
       currentAvatarUrl={currentUser?.avatarUrl}
       currentAvatarColor={currentUser?.avatarColor}
       companyName={companyName}
+      companyShortName={companyShortName}
       breadcrumb={
         activeNav === 'Departments'
           ? selectedDepartment && showsDepartmentGrid
@@ -2597,6 +2784,7 @@ export default function WorkhubDashboardDB({
                     onToggleStatus={canManagePeople ? handleToggleUserStatus : undefined}
                     onResendInvite={canInvitePeople ? handleResendInvite : undefined}
                     onCancelInvite={canInvitePeople ? handleCancelInvite : undefined}
+                    onAssignTask={canAssignDepartmentWork ? openCreateTaskFromDepartment : undefined}
                     busy={isPending}
                   />
                 </section>
@@ -2623,9 +2811,12 @@ export default function WorkhubDashboardDB({
               }))}
               canManage={canManageSelectedProject}
               canCreateWork={canCreateWork}
+              lockLeadToSelf={isMemberCreator}
               onBack={() => nav('Projects')}
               onCreateTask={(milestoneId) => {
                 setCreateTaskMilestoneId(milestoneId)
+                setCreateAssigneeId('')
+                setCreateFromDepartment(false)
                 setShowCreate(true)
               }}
               onOpenTask={(taskId) => {
@@ -2845,7 +3036,7 @@ export default function WorkhubDashboardDB({
               <ViewHeading
                 eyebrow="Workspace"
                 title="Settings"
-                description={canEditOrg ? 'Company structure, roles, and how WorkHub is configured.' : 'People, roles, and how this workspace is configured.'}
+                description={canEditOrg ? `Company structure, roles, and how ${PRODUCT_NAME} is configured.` : 'People, roles, and how this workspace is configured.'}
                 action={canInvitePeople ? () => setShowInvite(true) : undefined}
                 actionLabel="Add person"
               />
@@ -2968,6 +3159,7 @@ export default function WorkhubDashboardDB({
           onToggleStatus={canManagePeople ? handleToggleUserStatus : undefined}
           onResendInvite={canInvitePeople ? handleResendInvite : undefined}
           onCancelInvite={canInvitePeople ? handleCancelInvite : undefined}
+          onAssignTask={canAssignDepartmentWork ? openCreateTaskFromDepartment : undefined}
           busy={isPending}
         />
       )}
@@ -3060,8 +3252,25 @@ export default function WorkhubDashboardDB({
           onCreateDependency={handleCreateDependency}
           onDeleteDependency={handleDeleteDependency}
           onDeleteTask={() => handleDeleteTaskById(selectedTask.id)}
+          onReportsChange={(reports) => mergeTaskReports(selectedTask.id, reports)}
         />
       )}
+
+      {bulkDeleteConfirm ? (
+        <ConfirmDialog
+          title={`Delete ${selectedCount} task${selectedCount === 1 ? '' : 's'}?`}
+          description="Selected tasks and their comments, files, reports, and links will be permanently deleted. This cannot be undone."
+          confirmLabel={`Delete ${selectedCount} task${selectedCount === 1 ? '' : 's'}`}
+          pending={isPending}
+          onCancel={() => {
+            setBulkDeleteConfirm(false)
+            setBulkDeleteError(null)
+          }}
+          onConfirm={handleBulkDeleteTasks}
+        >
+          {bulkDeleteError ? <p className="form-error">{bulkDeleteError}</p> : null}
+        </ConfirmDialog>
+      ) : null}
 
       {deleteTaskConfirm ? (
        <ConfirmDialog
@@ -3081,11 +3290,13 @@ export default function WorkhubDashboardDB({
 
       {canCreateWork && showCreate && (
         <CreateTaskDialog
+          key={`create-${createAssigneeId}-${selectedDepartmentId ?? ''}-${createTaskMilestoneId}`}
           people={activePeople}
           directory={pickerPeople}
           currentUserId={currentUserId}
           currentUserDepartmentId={currentUser?.departmentId ?? ''}
           canAssignAcrossDepartments={isManagement}
+          canAssignOthers={canAssignDepartmentWork}
           departments={pickerDepartments}
           projects={projects.map((project) => ({
             id: project.id,
@@ -3097,12 +3308,15 @@ export default function WorkhubDashboardDB({
             milestones: project.milestones?.map((milestone) => ({ id: milestone.id, title: milestone.title })) ?? [],
           }))}
           defaultDepartmentId={selectedProject?.departmentId ?? selectedDepartmentId ?? ''}
+          defaultAssigneeId={createAssigneeId}
           defaultProjectId={selectedProject?.id ?? ''}
           defaultMilestoneId={createTaskMilestoneId}
-          lockDepartment={false}
+          lockDepartment={createFromDepartment || Boolean(selectedDepartmentId && !selectedProject)}
           onClose={() => {
             setShowCreate(false)
             setCreateTaskMilestoneId('')
+            setCreateAssigneeId('')
+            setCreateFromDepartment(false)
             router.refresh()
           }}
         />
@@ -3125,6 +3339,7 @@ export default function WorkhubDashboardDB({
           directory={pickerPeople}
           currentUserId={currentUserId}
           departments={pickerDepartments}
+          lockLeadToSelf={isMemberCreator}
           onClose={(projectId) => {
             setShowCreateProject(false)
             if (projectId) nav('Projects', { project: projectId })

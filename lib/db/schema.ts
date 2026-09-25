@@ -304,6 +304,29 @@ export const taskAttachments = pgTable(
   (table) => [index('task_attachments_task_idx').on(table.taskId)],
 )
 
+export const taskReports = pgTable(
+  'task_reports',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.id, { onDelete: 'cascade' }),
+    authorId: uuid('author_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    body: text('body').notNull(),
+    emailedToUserId: uuid('emailed_to_user_id').references(() => users.id, { onDelete: 'set null' }),
+    emailedAt: timestamp('emailed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('task_reports_task_idx').on(table.taskId),
+    index('task_reports_author_idx').on(table.authorId),
+  ],
+)
+
 export const taskApprovalStatusEnum = pgEnum('task_approval_status', [
   'requested',
   'approved',
@@ -599,6 +622,7 @@ export const tasksRelations = relations(tasks, ({ one, many }) => ({
   createdBy: one(users, { fields: [tasks.createdById], references: [users.id], relationName: 'createdBy' }),
   comments: many(taskComments),
   attachments: many(taskAttachments),
+  reports: many(taskReports),
   approvals: many(taskApprovals),
   deliverables: many(deliverables),
   milestoneLinks: many(projectMilestoneTasks),
@@ -616,6 +640,7 @@ export const projects = pgTable(
     ownerId: uuid('owner_id')
       .notNull()
       .references(() => users.id, { onDelete: 'restrict' }),
+    partnerId: uuid('partner_id').references(() => users.id, { onDelete: 'set null' }),
     departmentId: uuid('department_id').references(() => departments.id, { onDelete: 'set null' }),
     title: text('title').notNull(),
     description: text('description'),
@@ -626,6 +651,7 @@ export const projects = pgTable(
   },
   (table) => [
     index('projects_owner_idx').on(table.ownerId),
+    index('projects_partner_idx').on(table.partnerId),
     index('projects_company_idx').on(table.companyId),
     index('projects_department_idx').on(table.departmentId),
   ],
@@ -701,7 +727,8 @@ export const projectMilestoneTasks = pgTable(
 )
 
 export const projectsRelations = relations(projects, ({ one, many }) => ({
-  owner: one(users, { fields: [projects.ownerId], references: [users.id] }),
+  owner: one(users, { fields: [projects.ownerId], references: [users.id], relationName: 'projectOwner' }),
+  partner: one(users, { fields: [projects.partnerId], references: [users.id], relationName: 'projectPartner' }),
   department: one(departments, { fields: [projects.departmentId], references: [departments.id] }),
   teams: many(projectTeams),
   projectDepartments: many(projectDepartments),
@@ -737,6 +764,16 @@ export const taskCommentsRelations = relations(taskComments, ({ one }) => ({
 export const taskAttachmentsRelations = relations(taskAttachments, ({ one }) => ({
   task: one(tasks, { fields: [taskAttachments.taskId], references: [tasks.id] }),
   user: one(users, { fields: [taskAttachments.userId], references: [users.id] }),
+}))
+
+export const taskReportsRelations = relations(taskReports, ({ one }) => ({
+  task: one(tasks, { fields: [taskReports.taskId], references: [tasks.id] }),
+  author: one(users, { fields: [taskReports.authorId], references: [users.id], relationName: 'taskReportAuthor' }),
+  emailedTo: one(users, {
+    fields: [taskReports.emailedToUserId],
+    references: [users.id],
+    relationName: 'taskReportRecipient',
+  }),
 }))
 
 export const taskApprovalsRelations = relations(taskApprovals, ({ one }) => ({

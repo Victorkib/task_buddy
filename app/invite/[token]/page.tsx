@@ -3,11 +3,12 @@ import Link from 'next/link'
 import { AcceptInviteForm } from '@/components/auth/accept-invite-form'
 import { LoginHero } from '@/components/auth/login-hero'
 import { LoginLogo } from '@/components/auth/login-logo'
+import { PRODUCT_NAME, productTitle } from '@/lib/branding'
 import { getInvitePreview } from '@/app/invite-actions'
 
 export const metadata: Metadata = {
-  title: 'Accept invite | GCS WorkHub',
-  description: 'Activate your GCS WorkHub account and choose a password.',
+  title: productTitle('Accept invite'),
+  description: `Activate your ${PRODUCT_NAME} account and choose a password.`,
 }
 
 export const viewport: Viewport = {
@@ -44,7 +45,7 @@ export default async function InviteAcceptPage({
               </h2>
               <p className="mt-2 text-sm leading-relaxed text-slate-400">
                 {valid
-                  ? `Set your password to join${preview.departmentName ? ` ${preview.departmentName}` : ' GCS WorkHub'}${preview.jobTitle ? ` as ${preview.jobTitle}` : ''}.`
+                  ? `Set your password to join${preview.departmentName ? ` ${preview.departmentName}` : ` ${PRODUCT_NAME}`}${preview.jobTitle ? ` as ${preview.jobTitle}` : ''}.`
                   : preview.error}
               </p>
             </div>

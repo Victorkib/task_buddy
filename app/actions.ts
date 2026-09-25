@@ -22,6 +22,7 @@ import {
   canViewDepartmentReports,
   denied,
   isDepartmentLeader,
+  isDepartmentMemberCreator,
   isManagement,
 } from '@/lib/auth/permissions'
 import { canSelfCreateTask } from '@/lib/auth/sponsored'
@@ -52,6 +53,7 @@ import {
   responsibilityAssignees,
   taskAttachments,
   taskComments,
+  taskReports,
   tasks,
   users,
   roles,
@@ -73,6 +75,7 @@ import type {
 } from '@/lib/db/schema'
 import { resolveCategoryInput } from '@/lib/category'
 import { AVATAR_COLORS } from '@/lib/constants'
+import { PRODUCT_NAME } from '@/lib/branding'
 import { fullName, makeInitials, statusLabel, toDateInputValue } from '@/lib/format'
 import { destroyCloudinaryAsset, isOurCloudinaryUrl, purgeCloudinaryPublicIds } from '@/lib/uploads/cloudinary'
 
@@ -194,6 +197,7 @@ async function clearTaskMilestoneLinks(taskId: string) {
 async function createProjectShell(input: {
   companyId: string
   ownerId: string
+  partnerId?: string | null
   actorId: string
   departmentId: string
   title: string
@@ -207,6 +211,7 @@ async function createProjectShell(input: {
     .values({
       companyId: input.companyId,
       ownerId: input.ownerId,
+      partnerId: input.partnerId || null,
       departmentId: input.departmentId,
       title: input.title,
       description: input.description ?? null,
@@ -218,6 +223,9 @@ async function createProjectShell(input: {
   if (!project) return { error: 'Unable to create the project.' as const }
 
   await getDb().insert(projectTeams).values({ projectId: project.id, userId: input.ownerId })
+  if (input.partnerId && input.partnerId !== input.ownerId) {
+    await getDb().insert(projectTeams).values({ projectId: project.id, userId: input.partnerId })
+  }
   await syncProjectHomeDepartment(project.id, input.departmentId)
 
   const [milestone] = await getDb()
@@ -294,16 +302,25 @@ export async function createTask(formData: FormData) {
     return denied('You are not allowed to create tasks for the workspace.')
   }
 
+  const memberCreator = isDepartmentMemberCreator(currentUser)
   const placement = String(formData.get('placement') ?? 'independent')
   let assigneeId = String(formData.get('assigneeId') ?? currentUser.id)
-  if (selfServe) {
+  if (selfServe || memberCreator) {
+    // ICs log their own work — assigning colleagues is a leader action.
     assigneeId = currentUser.id
+  }
+  if (selfServe) {
     if (placement === 'new') {
       return denied('Ask your supervisor or department lead to open a project. You can log your own tasks.')
     }
   }
 
   const assignee = assigneeId === currentUser.id ? currentUser : await getUserById(assigneeId)
+  if (memberCreator) {
+    if (!currentUser.departmentId) {
+      return denied('Join a department before creating work.')
+    }
+  }
   const resolvedCategory = resolveCategoryInput(formData)
   if ('error' in resolvedCategory) return { error: resolvedCategory.error }
   const category = resolvedCategory.category
@@ -328,7 +345,7 @@ export async function createTask(formData: FormData) {
     const projectTitle = String(formData.get('newProjectTitle') ?? '').trim()
     if (!projectTitle) return { error: 'A project name is required for this task.' }
     let homeDepartmentId = String(formData.get('newProjectDepartmentId') ?? '') || currentUser.departmentId || null
-    if (isDepartmentLeader(currentUser) && !isManagement(currentUser)) {
+    if ((isDepartmentLeader(currentUser) || memberCreator) && !isManagement(currentUser)) {
       homeDepartmentId = currentUser.departmentId
     }
     if (!homeDepartmentId) return { error: 'Select the home department for the new project.' }
@@ -336,6 +353,7 @@ export async function createTask(formData: FormData) {
     const created = await createProjectShell({
       companyId: company.id,
       ownerId: currentUser.id,
+      partnerId: String(formData.get('partnerId') ?? '') || null,
       actorId: currentUser.id,
       departmentId: homeDepartmentId,
       title: projectTitle,
@@ -376,7 +394,7 @@ export async function createTask(formData: FormData) {
     milestoneId = null
   }
 
-  const leaderLocked = isDepartmentLeader(currentUser) && !isManagement(currentUser)
+  const leaderLocked = (isDepartmentLeader(currentUser) || memberCreator) && !isManagement(currentUser)
   if (!projectId && leaderLocked) {
     departmentId = currentUser.departmentId
     if (assignee?.departmentId && assignee.departmentId !== currentUser.departmentId) {
@@ -386,7 +404,7 @@ export async function createTask(formData: FormData) {
     departmentId = assignee?.departmentId || departmentId
   }
 
-  if (selfServe) {
+  if (selfServe || memberCreator) {
     departmentId = currentUser.departmentId || departmentId
   }
 
@@ -573,44 +591,60 @@ export async function createProject(formData: FormData) {
   if (!currentUser || !company) return { error: 'Workspace is not ready yet.' }
   if (!canCreateWork(currentUser)) return denied('You are not allowed to create projects.')
 
-  const ownerId = String(formData.get('ownerId') ?? currentUser.id)
+  const memberCreator = isDepartmentMemberCreator(currentUser)
+  let ownerId = String(formData.get('ownerId') ?? currentUser.id)
+  if (memberCreator) {
+    ownerId = currentUser.id
+  }
+  const partnerId = String(formData.get('partnerId') ?? '') || null
+  if (partnerId && partnerId === ownerId) {
+    return { error: 'Lead partner must be different from the project lead.' }
+  }
+  if (memberCreator && partnerId) {
+    const partner = await getUserById(partnerId)
+    if (!partner || partner.departmentId !== currentUser.departmentId) {
+      return denied('Choose a lead partner from your own department.')
+    }
+  }
   const description = String(formData.get('description') ?? '').trim() || null
 
-  const status = (String(formData.get('status') || 'active') ||
-    'active') as (typeof projectStatusEnum.enumValues)[number]
-
   let departmentId = String(formData.get('departmentId') ?? '') || null
-  if (isDepartmentLeader(currentUser) && !isManagement(currentUser)) {
+  if ((isDepartmentLeader(currentUser) || memberCreator) && !isManagement(currentUser)) {
     departmentId = currentUser.departmentId
   }
   if (!departmentId) return { error: 'Select a department to scope the project.' }
 
   const milestoneTitle = String(formData.get('milestoneTitle') ?? '').trim() || 'Delivery'
+  const startDate = String(formData.get('startDate') ?? '') || null
+  const dueDate = String(formData.get('dueDate') ?? '') || null
 
-  const [project] = await getDb()
-    .insert(projects)
-    .values({
-      companyId: company.id,
-      ownerId,
-      departmentId,
-      title,
-      description,
-      status,
-      progress: 0,
-    })
-    .returning()
+  const created = await createProjectShell({
+    companyId: company.id,
+    ownerId,
+    partnerId,
+    actorId: currentUser.id,
+    departmentId,
+    title,
+    description,
+    startDate,
+    dueDate,
+    milestoneTitle,
+  })
+  if ('error' in created) return { error: created.error }
+  const project = created.project
 
   const teamUserIds = formData.getAll('teamUserIds').map((v) => String(v)).filter(Boolean)
-  const teamSet = new Set<string>([ownerId, ...teamUserIds])
+  const teamSet = new Set<string>([ownerId, ...(partnerId ? [partnerId] : []), ...teamUserIds])
+  const existingTeam = await getDb()
+    .select({ userId: projectTeams.userId })
+    .from(projectTeams)
+    .where(eq(projectTeams.projectId, project.id))
+  const existingIds = new Set(existingTeam.map((row) => row.userId))
+  const toInsert = [...teamSet].filter((userId) => !existingIds.has(userId))
+  if (toInsert.length > 0) {
+    await getDb().insert(projectTeams).values(toInsert.map((userId) => ({ projectId: project.id, userId })))
+  }
 
-  await getDb().insert(projectTeams).values(
-    [...teamSet].map((userId) => ({
-      projectId: project.id,
-      userId,
-    })),
-  )
-
-  await syncProjectHomeDepartment(project.id, departmentId)
   const contributingIds = formData.getAll('contributingDepartmentIds').map((value) => String(value)).filter(Boolean)
   for (const contributingId of contributingIds) {
     if (contributingId === departmentId) continue
@@ -626,32 +660,8 @@ export async function createProject(formData: FormData) {
     }
   }
 
-  const milestone = await getDb()
-    .insert(projectMilestones)
-    .values({
-      projectId: project.id,
-      title: milestoneTitle,
-      status: 'active',
-      startDate: String(formData.get('startDate') ?? '') || null,
-      dueDate: String(formData.get('dueDate') ?? '') || null,
-      progress: 0,
-    })
-    .returning()
-
-  const milestoneRow = milestone[0]
-  if (!milestoneRow) return { error: 'Unable to create project milestone.' }
-
-  await getDb().insert(activityEvents).values({
-    companyId: company.id,
-    actorId: currentUser.id,
-    entityType: 'project',
-    entityId: project.id,
-    action: 'created',
-    summary: `created project ${title}`,
-  })
-
   refreshWorkhub()
-  return { ok: true, id: project.id }
+  return { ok: true as const, projectId: project.id, id: project.id }
 }
 
 export async function updateProjectDetails(input: {
@@ -660,6 +670,7 @@ export async function updateProjectDetails(input: {
   description: string
   status: (typeof projectStatusEnum.enumValues)[number]
   ownerId: string
+  partnerId?: string | null
   departmentId: string
 }) {
   const loaded = await requireManageableProject(input.projectId)
@@ -669,7 +680,27 @@ export async function updateProjectDetails(input: {
   const title = input.title.trim()
   if (!title) return { error: 'A project name is required.' }
   if (!input.departmentId) return { error: 'Select a department to scope the project.' }
-  if (!input.ownerId) return { error: 'Select who leads this project.' }
+
+  let ownerId = input.ownerId
+  let partnerId = input.partnerId || null
+  let departmentId = input.departmentId
+  if (isDepartmentMemberCreator(currentUser)) {
+    if (project.ownerId !== currentUser.id) {
+      return denied('You can only edit projects you lead.')
+    }
+    ownerId = currentUser.id
+    departmentId = currentUser.departmentId ?? project.departmentId ?? departmentId
+    if (partnerId) {
+      const partner = await getUserById(partnerId)
+      if (!partner || partner.departmentId !== currentUser.departmentId) {
+        return denied('Choose a lead partner from your own department.')
+      }
+    }
+  }
+  if (!ownerId) return { error: 'Select who leads this project.' }
+  if (partnerId && partnerId === ownerId) {
+    return { error: 'Lead partner must be different from the project lead.' }
+  }
 
   await getDb()
     .update(projects)
@@ -677,8 +708,9 @@ export async function updateProjectDetails(input: {
       title,
       description: input.description.trim() || null,
       status: input.status,
-      ownerId: input.ownerId,
-      departmentId: input.departmentId,
+      ownerId,
+      partnerId,
+      departmentId,
       updatedAt: new Date(),
     })
     .where(eq(projects.id, project.id))
@@ -687,11 +719,14 @@ export async function updateProjectDetails(input: {
     .select({ userId: projectTeams.userId })
     .from(projectTeams)
     .where(eq(projectTeams.projectId, project.id))
-  if (!existingTeam.some((row) => row.userId === input.ownerId)) {
-    await getDb().insert(projectTeams).values({ projectId: project.id, userId: input.ownerId })
+  if (!existingTeam.some((row) => row.userId === ownerId)) {
+    await getDb().insert(projectTeams).values({ projectId: project.id, userId: ownerId })
+  }
+  if (partnerId && !existingTeam.some((row) => row.userId === partnerId)) {
+    await getDb().insert(projectTeams).values({ projectId: project.id, userId: partnerId })
   }
 
-  await syncProjectHomeDepartment(project.id, input.departmentId)
+  await syncProjectHomeDepartment(project.id, departmentId)
 
   await getDb().insert(activityEvents).values({
     companyId: project.companyId,
@@ -1654,6 +1689,158 @@ export async function deleteTask(taskId: string) {
   return { ok: true as const }
 }
 
+export async function deleteTasks(taskIds: string[]) {
+  const ids = [...new Set(taskIds.map((id) => String(id).trim()).filter(Boolean))]
+  if (ids.length === 0) return { error: 'Select at least one task to delete.' }
+
+  const currentUser = await getCurrentUser()
+  if (!currentUser) return { error: 'Not signed in.' }
+
+  const rows = await getDb().select().from(tasks).where(inArray(tasks.id, ids))
+  if (rows.length === 0) return { error: 'No matching tasks found.' }
+
+  const allowed: typeof rows = []
+  for (const task of rows) {
+    if (canDeleteTask(currentUser, await taskAccessFor(task))) allowed.push(task)
+  }
+  if (allowed.length === 0) return denied('You are not allowed to delete the selected tasks.')
+
+  const allowedIds = allowed.map((task) => task.id)
+  const dependents = await getDb()
+    .select({ blockedTaskId: taskDependencies.blockedTaskId, blockingTaskId: taskDependencies.blockingTaskId })
+    .from(taskDependencies)
+    .where(inArray(taskDependencies.blockingTaskId, allowedIds))
+  const linkedProjects = await getDb()
+    .select({ projectId: projectMilestones.projectId })
+    .from(projectMilestoneTasks)
+    .innerJoin(projectMilestones, eq(projectMilestoneTasks.milestoneId, projectMilestones.id))
+    .where(inArray(projectMilestoneTasks.taskId, allowedIds))
+
+  const purged = await purgeTaskMediaThenDelete(allowedIds)
+  if ('error' in purged) return purged
+
+  for (const dependent of dependents) {
+    const blocker = allowed.find((task) => task.id === dependent.blockingTaskId)
+    if (!blocker) continue
+    await maybeUnblockTask(
+      dependent.blockedTaskId,
+      blocker.companyId,
+      currentUser.id,
+      'unblocked a waiting task after a blocker was deleted',
+    )
+  }
+  for (const projectId of [...new Set(linkedProjects.map((row) => row.projectId))]) {
+    await syncProjectProgress(projectId)
+  }
+
+  await getDb().insert(activityEvents).values({
+    companyId: allowed[0]!.companyId,
+    actorId: currentUser.id,
+    entityType: 'task',
+    entityId: allowedIds[0]!,
+    action: 'deleted',
+    summary: `deleted ${allowedIds.length} task${allowedIds.length === 1 ? '' : 's'}`,
+  })
+
+  refreshWorkhub()
+  return { ok: true as const, deletedCount: allowedIds.length }
+}
+
+export async function createTaskReport(formData: FormData) {
+  const taskId = String(formData.get('taskId') ?? '').trim()
+  const title = String(formData.get('title') ?? '').trim()
+  const body = String(formData.get('body') ?? '').trim()
+  const emailToSupervisor = String(formData.get('emailToSupervisor') ?? '') === '1'
+  if (!taskId) return { error: 'Task is required.' }
+  if (!title) return { error: 'Give the report a title.' }
+  if (!body) return { error: 'Write the report before saving.' }
+
+  const currentUser = await getCurrentUser()
+  if (!currentUser) return { error: 'Not signed in.' }
+  const loaded = await loadTaskAccess(taskId)
+  if (!loaded) return { error: 'Task not found.' }
+  if (!canProgressTask(currentUser, loaded.access)) {
+    return denied('You are not allowed to report on this task.')
+  }
+
+  let emailedToUserId: string | null = null
+  let emailedAt: Date | null = null
+  if (emailToSupervisor) {
+    emailedToUserId = currentUser.managerId ?? null
+    if (!emailedToUserId && currentUser.departmentId) {
+      const [dept] = await getDb().select().from(departments).where(eq(departments.id, currentUser.departmentId)).limit(1)
+      emailedToUserId = dept?.ownerId ?? null
+    }
+    if (!emailedToUserId) {
+      return { error: 'No supervisor is set on your profile. Ask leadership to set Reports to, then try again.' }
+    }
+  }
+
+  const [report] = await getDb()
+    .insert(taskReports)
+    .values({
+      taskId,
+      authorId: currentUser.id,
+      title,
+      body,
+      emailedToUserId,
+      emailedAt: emailToSupervisor ? new Date() : null,
+    })
+    .returning()
+
+  if (emailToSupervisor && emailedToUserId) {
+    const recipient = await getUserById(emailedToUserId)
+    const company = await getCompany()
+    if (recipient?.email) {
+      try {
+        const { sendMail, getPublicAppUrl } = await import('@/lib/mail/send')
+        const { taskReportEmail } = await import('@/lib/mail/templates')
+        const message = taskReportEmail({
+          recipientFirstName: recipient.firstName,
+          authorName: fullName(currentUser),
+          taskTitle: loaded.task.title,
+          reportTitle: title,
+          reportBody: body,
+          taskUrl: `${getPublicAppUrl()}/?view=My%20tasks&task=${taskId}`,
+          companyName: company?.name ?? 'Globecon Convergence Solutions',
+        })
+        await sendMail({ to: recipient.email, ...message })
+        emailedAt = new Date()
+        await getDb().update(taskReports).set({ emailedAt }).where(eq(taskReports.id, report.id))
+        await getDb().insert(notifications).values({
+          companyId: loaded.task.companyId,
+          userId: emailedToUserId,
+          type: 'reminder',
+          title: 'Task report shared with you',
+          body: `${currentUser.firstName} ${currentUser.lastName} sent a report on “${loaded.task.title}”.`,
+          entityType: 'task',
+          entityId: taskId,
+        })
+      } catch (error) {
+        return {
+          error:
+            error instanceof Error
+              ? `Report saved, but email failed: ${error.message}`
+              : 'Report saved, but email could not be sent.',
+          reportId: report.id,
+        }
+      }
+    }
+  }
+
+  await getDb().insert(activityEvents).values({
+    companyId: loaded.task.companyId,
+    actorId: currentUser.id,
+    entityType: 'task',
+    entityId: taskId,
+    action: 'reported',
+    summary: `filed report “${title}” on ${loaded.task.title}`,
+  })
+
+  refreshWorkhub()
+  return { ok: true as const, reportId: report.id, emailed: Boolean(emailedAt) }
+}
+
 export async function deleteProject(projectId: string, options?: { deleteLinkedTasks?: boolean }) {
   const loaded = await requireManageableProject(projectId)
   if ('error' in loaded) return loaded
@@ -2402,7 +2589,7 @@ export async function changeOwnPassword(input: {
   if (!currentPassword || !nextPassword) return { error: 'Enter your current and new password.' }
   if (nextPassword.length < 8) return { error: 'New password must be at least 8 characters.' }
   if (nextPassword !== confirmPassword) return { error: 'New password and confirmation do not match.' }
-  if (!currentUser.passwordHash) return { error: 'This account cannot change a password from WorkHub.' }
+  if (!currentUser.passwordHash) return { error: `This account cannot change a password from ${PRODUCT_NAME}.` }
 
   const matches = await bcrypt.compare(currentPassword, currentUser.passwordHash)
   if (!matches) return { error: 'Current password is incorrect.' }
@@ -2624,7 +2811,7 @@ export async function sendWorkspaceReminder(input: { userId: string; message: st
     companyId: company.id,
     userId: input.userId,
     type: 'reminder',
-    title: 'WorkHub reminder',
+    title: `${PRODUCT_NAME} reminder`,
     body: message,
     entityType: input.taskId ? 'task' : 'user',
     entityId: input.taskId ?? null,
