@@ -1442,3 +1442,141 @@ html:has(.auth-shell) body { background: #020617; }
   .profile-fields .span-2 { grid-column: auto; }
   .profile-photo-row { flex-direction: column; }
 }
+
+.office-desk { display: flex; flex-direction: column; gap: 16px; }
+.office-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.office-tabs button {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted-foreground);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.office-tabs button.selected { color: var(--foreground); background: var(--card); border-color: var(--foreground); }
+.office-card {
+  border-top: 1px solid var(--border);
+  padding: 14px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.office-card header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.office-card header p, .office-meta { margin: 0; color: var(--muted-foreground); font-size: 12px; }
+.office-card p { margin: 0; font-size: 13px; line-height: 1.45; }
+.office-actions, .office-inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.office-inline input { min-width: 180px; }
+.office-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--muted);
+  white-space: nowrap;
+}
+.office-chip-attention { background: oklch(.94 .05 70); color: oklch(.38 .12 55); }
+.office-chip-good { background: oklch(.94 .05 155); color: oklch(.32 .1 155); }
+.office-alert-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.office-alert {
+  text-align: left;
+  border: 1px solid var(--border);
+  background: var(--background);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  cursor: pointer;
+}
+.office-alert span { color: var(--muted-foreground); font-size: 12px; }
+.office-alert-attention { border-color: oklch(.8 .08 70); }
+.office-list { margin: 12px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.office-subhead { margin: 18px 0 8px; font-size: 13px; }
+.office-balance p { margin: 0 0 8px; font-size: 14px; }
+.office-search { display: flex; flex-direction: column; gap: 6px; font-size: 11px; font-weight: 700; max-width: 320px; margin: 12px 0; }
+.office-search input, .office-desk textarea, .office-inline input {
+  width: 100%;
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  background: var(--background);
+  padding: 10px 11px;
+  font-size: 12px;
+}
+.office-desk .metric-card { display: flex; flex-direction: column; gap: 4px; }
+.office-desk .metric-card > span, .office-desk .metric-card p { margin: 0; color: var(--muted-foreground); font-size: 12px; }
+.office-desk .metric-card strong { font-size: 22px; letter-spacing: -.03em; }
+.office-check { flex-direction: row !important; align-items: center; gap: 8px; font-size: 13px; }
+.office-card details { font-size: 13px; }
+.office-card summary { cursor: pointer; font-weight: 700; }
+.office-tabs button { display: inline-flex; align-items: center; }
+.office-tabs button em {
+  margin-left: 6px;
+  font-style: normal;
+  background: oklch(.94 .05 70);
+  color: oklch(.38 .12 55);
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 11px;
+}
+.office-jump {
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  width: 100%;
+}
+.office-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 8px;
+  margin: 14px 0 16px;
+}
+.office-choices button {
+  text-align: left;
+  border: 1px solid var(--border);
+  background: var(--background);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.office-choices button.selected { border-color: #1a2f6b; box-shadow: inset 0 0 0 1px #1a2f6b; background: color-mix(in oklch, #1a2f6b 6%, var(--background)); }
+.office-choices span, .office-queue span { color: var(--muted-foreground); font-size: 12px; line-height: 1.35; }
+.office-split { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(260px, .85fr); gap: 16px; align-items: start; margin-top: 14px; }
+.office-queue { display: flex; flex-direction: column; gap: 6px; max-height: 68vh; overflow: auto; }
+.office-queue button {
+  text-align: left;
+  border: 1px solid var(--border);
+  background: var(--background);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.office-queue button.selected { border-color: #1a2f6b; background: color-mix(in oklch, #1a2f6b 7%, var(--background)); }
+.office-table-wrap { overflow: auto; }
+.office-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.office-table th { text-align: left; font-size: 11px; letter-spacing: .03em; text-transform: uppercase; color: var(--muted-foreground); padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.office-table td { padding: 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.office-table tbody tr { cursor: pointer; }
+.office-table tbody tr.selected { background: color-mix(in oklch, #1a2f6b 8%, transparent); }
+.office-gap { display: block; margin-top: 2px; color: oklch(.42 .12 55); font-size: 11px; font-weight: 700; }
+.office-name { border: 0; background: transparent; padding: 0; margin: 0; text-align: left; cursor: pointer; color: inherit; font: inherit; display: flex; flex-direction: column; align-items: flex-start; }
+.office-editor { border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: var(--background); }
+.office-editor h3 { margin: 0; font-size: 16px; }
+.office-desk .form-grid label { font-size: 13px; font-weight: 650; }
+.office-desk .form-grid input, .office-desk .form-grid select, .office-desk .form-grid textarea { font-size: 14px; }
+@media (max-width: 900px) { .office-split { grid-template-columns: 1fr; } }

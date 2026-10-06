@@ -515,6 +515,269 @@ export const managementRequests = pgTable(
   ],
 )
 
+export const employmentTypeEnum = pgEnum('employment_type', [
+  'permanent',
+  'contract',
+  'intern',
+  'attachee',
+  'volunteer',
+  'part_time',
+])
+
+export const leaveTypeEnum = pgEnum('leave_type', [
+  'annual',
+  'sick',
+  'compassionate',
+  'unpaid',
+  'study',
+  'half_day',
+])
+
+export const adminRequestKindEnum = pgEnum('admin_request_kind', [
+  'leave',
+  'letter',
+  'print',
+  'imprest',
+  'purchase',
+  'equipment',
+  'training',
+])
+
+export const adminRequestStatusEnum = pgEnum('admin_request_status', [
+  'submitted',
+  'in_review',
+  'approved',
+  'rejected',
+  'cancelled',
+  'completed',
+])
+
+export const officeLetterTypeEnum = pgEnum('office_letter_type', [
+  'employment_confirmation',
+  'introduction',
+  'bank',
+  'internship',
+  'custom',
+])
+
+export const offerLetterStatusEnum = pgEnum('offer_letter_status', [
+  'draft',
+  'awaiting_md',
+  'issued',
+  'accepted',
+  'declined',
+  'withdrawn',
+])
+
+export const officeDocumentStatusEnum = pgEnum('office_document_status', [
+  'draft',
+  'review',
+  'published',
+  'superseded',
+  'archived',
+])
+
+export const officeVendorStatusEnum = pgEnum('office_vendor_status', ['active', 'ended'])
+
+export const officeAssetStatusEnum = pgEnum('office_asset_status', ['in_stock', 'assigned', 'repair', 'retired'])
+
+export const officeComplianceStatusEnum = pgEnum('office_compliance_status', [
+  'upcoming',
+  'due',
+  'overdue',
+  'done',
+])
+
+export const staffProfiles = pgTable('staff_profiles', {
+  userId: uuid('user_id')
+    .primaryKey()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  employmentType: employmentTypeEnum('employment_type').notNull().default('permanent'),
+  startDate: date('start_date'),
+  endDate: date('end_date'),
+  probationEndDate: date('probation_end_date'),
+  annualEntitlementDays: integer('annual_entitlement_days').notNull().default(21),
+  sickEntitlementDays: integer('sick_entitlement_days').notNull().default(7),
+  annualUsedHundredths: integer('annual_used_hundredths').notNull().default(0),
+  sickUsedHundredths: integer('sick_used_hundredths').notNull().default(0),
+  unpaidUsedHundredths: integer('unpaid_used_hundredths').notNull().default(0),
+  carryOverHundredths: integer('carry_over_hundredths').notNull().default(0),
+  leaveYear: integer('leave_year').notNull().default(2026),
+  emergencyName: text('emergency_name'),
+  emergencyPhone: text('emergency_phone'),
+  notes: text('notes'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+})
+
+export const adminRequests = pgTable(
+  'admin_requests',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    requestorId: uuid('requestor_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    reviewerId: uuid('reviewer_id').references(() => users.id, { onDelete: 'set null' }),
+    kind: adminRequestKindEnum('kind').notNull(),
+    status: adminRequestStatusEnum('status').notNull().default('submitted'),
+    title: text('title').notNull(),
+    description: text('description'),
+    leaveType: leaveTypeEnum('leave_type'),
+    startDate: date('start_date'),
+    endDate: date('end_date'),
+    daysHundredths: integer('days_hundredths').notNull().default(0),
+    amountKes: integer('amount_kes').notNull().default(0),
+    copies: integer('copies').notNull().default(1),
+    confidential: boolean('confidential').notNull().default(false),
+    letterType: officeLetterTypeEnum('letter_type'),
+    documentNumber: text('document_number'),
+    generatedHtml: text('generated_html'),
+    coverageUserId: uuid('coverage_user_id').references(() => users.id, { onDelete: 'set null' }),
+    coverageTaskId: uuid('coverage_task_id').references(() => tasks.id, { onDelete: 'set null' }),
+    attachmentUrl: text('attachment_url'),
+    attachmentPublicId: text('attachment_public_id'),
+    attachmentName: text('attachment_name'),
+    decisionReason: text('decision_reason'),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('admin_requests_status_idx').on(table.status),
+    index('admin_requests_requestor_idx').on(table.requestorId),
+    index('admin_requests_kind_idx').on(table.kind),
+  ],
+)
+
+export const offerLetters = pgTable(
+  'offer_letters',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    createdById: uuid('created_by_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    approvedById: uuid('approved_by_id').references(() => users.id, { onDelete: 'set null' }),
+    departmentId: uuid('department_id').references(() => departments.id, { onDelete: 'set null' }),
+    candidateName: text('candidate_name').notNull(),
+    candidateEmail: text('candidate_email'),
+    jobTitle: text('job_title').notNull(),
+    salaryText: text('salary_text'),
+    startDate: date('start_date'),
+    probationMonths: integer('probation_months').notNull().default(3),
+    status: offerLetterStatusEnum('status').notNull().default('draft'),
+    documentNumber: text('document_number'),
+    bodyHtml: text('body_html').notNull(),
+    notes: text('notes'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index('offer_letters_status_idx').on(table.status)],
+)
+
+export const officeDocuments = pgTable(
+  'office_documents',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    ownerId: uuid('owner_id').references(() => users.id, { onDelete: 'set null' }),
+    title: text('title').notNull(),
+    category: text('category').notNull().default('policy'),
+    status: officeDocumentStatusEnum('status').notNull().default('draft'),
+    body: text('body'),
+    fileUrl: text('file_url'),
+    documentNumber: text('document_number'),
+    effectiveDate: date('effective_date'),
+    reviewDate: date('review_date'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index('office_documents_status_idx').on(table.status)],
+)
+
+export const documentAcknowledgements = pgTable(
+  'document_acknowledgements',
+  {
+    documentId: uuid('document_id')
+      .notNull()
+      .references(() => officeDocuments.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex('document_acks_pk').on(table.documentId, table.userId)],
+)
+
+export const officeVendors = pgTable(
+  'office_vendors',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    ownerId: uuid('owner_id').references(() => users.id, { onDelete: 'set null' }),
+    name: text('name').notNull(),
+    category: text('category').notNull().default('software'),
+    renewalDate: date('renewal_date'),
+    amountKes: integer('amount_kes').notNull().default(0),
+    status: officeVendorStatusEnum('status').notNull().default('active'),
+    notes: text('notes'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index('office_vendors_renewal_idx').on(table.renewalDate)],
+)
+
+export const officeAssets = pgTable(
+  'office_assets',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    assignedUserId: uuid('assigned_user_id').references(() => users.id, { onDelete: 'set null' }),
+    name: text('name').notNull(),
+    assetTag: text('asset_tag'),
+    status: officeAssetStatusEnum('status').notNull().default('in_stock'),
+    notes: text('notes'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index('office_assets_assignee_idx').on(table.assignedUserId)],
+)
+
+export const officeCompliance = pgTable(
+  'office_compliance',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    ownerId: uuid('owner_id').references(() => users.id, { onDelete: 'set null' }),
+    title: text('title').notNull(),
+    category: text('category').notNull().default('statutory'),
+    dueDate: date('due_date'),
+    cadence: text('cadence').notNull().default('once'),
+    status: officeComplianceStatusEnum('status').notNull().default('upcoming'),
+    notes: text('notes'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index('office_compliance_due_idx').on(table.dueDate)],
+)
+
+export const officeSequences = pgTable('office_sequences', {
+  key: text('key').primaryKey(),
+  lastValue: integer('last_value').notNull().default(0),
+})
+
 export const activityEvents = pgTable(
   'activity_events',
   {
@@ -575,6 +838,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   managementRequestsCreated: many(managementRequests, { relationName: 'requestor' }),
   managementRequestsAssigned: many(managementRequests, { relationName: 'assignee' }),
   invites: many(userInvites, { relationName: 'invitee' }),
+  staffProfile: one(staffProfiles, { fields: [users.id], references: [staffProfiles.userId] }),
 }))
 
 export const userInvitesRelations = relations(userInvites, ({ one }) => ({
@@ -838,6 +1102,50 @@ export const managementRequestsRelations = relations(managementRequests, ({ one 
     references: [users.id],
     relationName: 'assignee',
   }),
+}))
+
+export const staffProfilesRelations = relations(staffProfiles, ({ one }) => ({
+  user: one(users, { fields: [staffProfiles.userId], references: [users.id] }),
+}))
+
+export const adminRequestsRelations = relations(adminRequests, ({ one }) => ({
+  company: one(companies, { fields: [adminRequests.companyId], references: [companies.id] }),
+  requestor: one(users, { fields: [adminRequests.requestorId], references: [users.id], relationName: 'adminRequestor' }),
+  reviewer: one(users, { fields: [adminRequests.reviewerId], references: [users.id], relationName: 'adminReviewer' }),
+  coverageUser: one(users, { fields: [adminRequests.coverageUserId], references: [users.id], relationName: 'adminCoverage' }),
+}))
+
+export const offerLettersRelations = relations(offerLetters, ({ one }) => ({
+  company: one(companies, { fields: [offerLetters.companyId], references: [companies.id] }),
+  createdBy: one(users, { fields: [offerLetters.createdById], references: [users.id], relationName: 'offerCreatedBy' }),
+  approvedBy: one(users, { fields: [offerLetters.approvedById], references: [users.id], relationName: 'offerApprovedBy' }),
+  department: one(departments, { fields: [offerLetters.departmentId], references: [departments.id] }),
+}))
+
+export const officeDocumentsRelations = relations(officeDocuments, ({ one, many }) => ({
+  company: one(companies, { fields: [officeDocuments.companyId], references: [companies.id] }),
+  owner: one(users, { fields: [officeDocuments.ownerId], references: [users.id] }),
+  acknowledgements: many(documentAcknowledgements),
+}))
+
+export const documentAcknowledgementsRelations = relations(documentAcknowledgements, ({ one }) => ({
+  document: one(officeDocuments, { fields: [documentAcknowledgements.documentId], references: [officeDocuments.id] }),
+  user: one(users, { fields: [documentAcknowledgements.userId], references: [users.id] }),
+}))
+
+export const officeVendorsRelations = relations(officeVendors, ({ one }) => ({
+  company: one(companies, { fields: [officeVendors.companyId], references: [companies.id] }),
+  owner: one(users, { fields: [officeVendors.ownerId], references: [users.id] }),
+}))
+
+export const officeAssetsRelations = relations(officeAssets, ({ one }) => ({
+  company: one(companies, { fields: [officeAssets.companyId], references: [companies.id] }),
+  assignedUser: one(users, { fields: [officeAssets.assignedUserId], references: [users.id] }),
+}))
+
+export const officeComplianceRelations = relations(officeCompliance, ({ one }) => ({
+  company: one(companies, { fields: [officeCompliance.companyId], references: [companies.id] }),
+  owner: one(users, { fields: [officeCompliance.ownerId], references: [users.id] }),
 }))
 
 /** Better Auth identity tables. WorkHub `users` stays the org/people record. IDs match. */

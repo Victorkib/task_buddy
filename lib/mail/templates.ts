@@ -224,3 +224,17 @@ export function taskReportEmail(input: {
 
   return { subject, html, text }
 }
+
+export function officeNoticeEmail(input: { firstName: string; title: string; body: string; href: string; cta: string }) {
+  const text = `Hi ${input.firstName},\n\n${input.body}\n\n${input.cta}: ${input.href}`
+  const html = layout({
+    title: input.title,
+    preheader: input.body,
+    bodyHtml: `
+      <p style="margin:0 0 14px;font-size:15px;line-height:1.55;">Hi ${escapeHtml(input.firstName)},</p>
+      <p style="margin:0 0 16px;font-size:15px;line-height:1.55;">${escapeHtml(input.body)}</p>
+      ${ctaButton(input.href, input.cta)}
+    `,
+  })
+  return { subject: input.title, html, text }
+}

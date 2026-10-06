@@ -7,6 +7,8 @@ export const WORKSPACE_VIEWS = [
   'Projects',
   'Reports',
   'Activity',
+  'Admin office',
+  'My office',
   'Settings',
 ] as const
 

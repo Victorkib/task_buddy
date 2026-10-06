@@ -103,12 +103,37 @@ export function canSubmitWorkRequest(user: Actor) {
   return Boolean(user) && !canCreateWork(user)
 }
 
+export const ADMIN_OFFICE_DEPARTMENT_SLUG = 'finance-admin'
+
+export function canRunAdminOffice(user: Actor) {
+  if (!user) return false
+  if (isManagement(user)) return true
+  const slug = user.department?.slug
+  if (slug === ADMIN_OFFICE_DEPARTMENT_SLUG && (isDepartmentHead(user) || isManager(user))) return true
+  return false
+}
+
+export function canManageStaffRecords(user: Actor) {
+  return canManageUsers(user) || canRunAdminOffice(user)
+}
+
+export function canSubmitAdminRequest(user: Actor) {
+  return Boolean(user)
+}
+
+export function canDecideAdminRequest(user: Actor, requestorId?: string) {
+  if (!canRunAdminOffice(user) || !user) return false
+  if (requestorId && requestorId === user.id && !isManagement(user)) return false
+  return true
+}
+
 export function inviteableRoleKeys(user: Actor): RoleKey[] {
   if (!user) return []
   if (isAdmin(user)) {
     return ['admin', 'managing_director', 'department_head', 'manager', 'employee', 'volunteer']
   }
   if (isManagingDirector(user)) return ['department_head', 'manager', 'employee', 'volunteer']
+  if (canRunAdminOffice(user)) return ['department_head', 'manager', 'employee', 'volunteer']
   if (isDepartmentHead(user)) return ['manager', 'employee', 'volunteer']
   return []
 }
@@ -119,7 +144,7 @@ export function canInvite(
 ) {
   const allowed = inviteableRoleKeys(user)
   if (!allowed.includes(input.roleKey as RoleKey)) return false
-  if (isAdmin(user) || isManagingDirector(user)) return true
+  if (isAdmin(user) || isManagingDirector(user) || canRunAdminOffice(user)) return true
   if (isDepartmentHead(user)) {
     return Boolean(user?.departmentId) && input.departmentId === user?.departmentId
   }
@@ -233,7 +258,7 @@ export function canChangeResponsibilityOwner(
 export function canDeactivateUser(actor: Actor, target: Actor, remainingAdminCount: number) {
   if (!actor || !target) return false
   if (actor.id === target.id) return false
-  if (!canManageUsers(actor)) return false
+  if (!canManageStaffRecords(actor)) return false
   if (isAdmin(target) && !isAdmin(actor)) return false
   if (isAdmin(target) && remainingAdminCount <= 1) return false
   return true
@@ -242,7 +267,7 @@ export function canDeactivateUser(actor: Actor, target: Actor, remainingAdminCou
 /** Who may edit another person's profile, placement, and primary role. */
 export function canEditPerson(actor: Actor, target: Actor) {
   if (!actor || !target) return false
-  if (!canManageUsers(actor)) return false
+  if (!canManageStaffRecords(actor)) return false
   if (isAdmin(target) && !isAdmin(actor)) return false
   return true
 }

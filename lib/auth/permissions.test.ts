@@ -13,6 +13,10 @@ import {
   canSeeTask,
   canSubmitLeadershipRequest,
   canSubmitWorkRequest,
+  canDecideAdminRequest,
+  canManageStaffRecords,
+  canRunAdminOffice,
+  canSubmitAdminRequest,
   canViewCompanyReports,
   canViewDepartmentReports,
   inviteableRoleKeys,
@@ -158,5 +162,22 @@ assert(!canEditPerson(md, admin), 'md cannot edit admin')
 assert(canEditPerson(md, employee), 'md can edit employees')
 assert(!canEditPerson(employee, employee), 'employees cannot edit people')
 assert(!canEditPerson(head, employee), 'department head cannot edit people access')
+
+const carolyn = {
+  id: 'carolyn',
+  departmentId: 'fin',
+  department: { slug: 'finance-admin', name: 'Finance & Admin' },
+  roles: [{ role: { key: 'department_head' } }],
+}
+assert(canRunAdminOffice(carolyn), 'finance head runs the admin office')
+assert(canRunAdminOffice(md) && canRunAdminOffice(admin), 'management can open the admin office')
+assert(!canRunAdminOffice(head), 'other department heads do not run the admin office')
+assert(canSubmitAdminRequest(employee), 'staff can send office requests')
+assert(canDecideAdminRequest(carolyn, 'emp'), 'admin office decides other people')
+assert(!canDecideAdminRequest(carolyn, 'carolyn'), 'admin office cannot decide its own request')
+assert(canDecideAdminRequest(md, 'carolyn'), 'md can decide the admin office’s own request')
+assert(!canDecideAdminRequest(employee), 'employees cannot decide office requests')
+assert(canManageStaffRecords(carolyn) && canEditPerson(carolyn, employee), 'admin office maintains staff records')
+assert(!canEditPerson(carolyn, admin), 'admin office cannot edit the workspace admin')
 
 console.log('permissions tests passed')

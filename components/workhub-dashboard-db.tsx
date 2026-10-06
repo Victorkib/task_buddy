@@ -6,6 +6,7 @@ import {
   ArrowUpRight,
   Bell,
   BriefcaseBusiness,
+  Building2,
   CalendarDays,
   Check,
   ChevronLeft,
@@ -15,6 +16,7 @@ import {
   Download,
   FileText,
   Home,
+  Inbox,
   LayoutDashboard,
   Loader2,
   MessageSquare,
@@ -37,6 +39,7 @@ import { CreateResponsibilityDialog } from '@/components/create-responsibility-d
 import { TaskDetailSheet, type TaskDetailTab, type TaskReportEntry } from '@/components/task-detail-sheet'
 import { InviteEmployeeDialog } from '@/components/invite-employee-dialog'
 import { OrgSettingsPanel } from '@/components/org-settings-panel'
+import { AdminOfficeDesk } from '@/components/admin-office-desk'
 import { ProjectWorkspace } from '@/components/project-workspace'
 import { WorkhubShell, useCollapsedSidebar } from '@/components/workhub-shell'
 import { UserAvatar } from '@/components/user-avatar'
@@ -47,6 +50,7 @@ import {
 import { formatDue, formatLongDate, formatRelative, fullName, greeting, categoryLabel, ledBy, toDateInputValue } from '@/lib/format'
 import { signOutToLogin } from '@/lib/auth/sign-out-client'
 import { resolveWorkspaceView, type WorkspaceView } from '@/lib/workspace-nav'
+import type { OfficeDesk } from '@/lib/admin-office/types'
 import { DepartmentDetailBody, DepartmentDrawer } from '@/components/department-detail'
 import {
   departmentHealth,
@@ -63,6 +67,7 @@ import {
   canProgressTask,
   canManageOrg,
   canManageUsers,
+  canRunAdminOffice,
   canSubmitLeadershipRequest,
   canSubmitWorkRequest,
   canViewCompanyReports,
@@ -517,6 +522,7 @@ export default function WorkhubDashboardDB({
   workspaceTeams = [],
   companyName = 'GCS Operations',
   companyShortName = 'GCS',
+  officeDesk = null,
 }: {
   initialTasks: DbTask[]
   initialDepartments: DbDepartment[]
@@ -565,6 +571,7 @@ export default function WorkhubDashboardDB({
   workspaceTeams?: { id: string; name: string; departmentId?: string; department?: { name: string } | null }[]
   companyName?: string
   companyShortName?: string
+  officeDesk?: OfficeDesk | null
 }) {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -737,6 +744,7 @@ export default function WorkhubDashboardDB({
   const canViewReports = canViewCompanyReports(actor) || canViewDepartmentReports(actor)
   const canManagePeople = canManageUsers(actor)
   const canEditOrg = canManageOrg(actor)
+  const runsOffice = canRunAdminOffice(actor)
   const canSubmitRequests = canSubmitLeadershipRequest(actor)
   const canRequestWork = canSubmitWorkRequest(actor)
   const inviteRoleKeys = inviteableRoleKeys(actor)
@@ -757,6 +765,10 @@ export default function WorkhubDashboardDB({
     ...(canViewProjects ? [{ label: 'Projects' as const, icon: BriefcaseBusiness, group: 'Delivery' }] : []),
     ...(canViewReports ? [{ label: 'Reports' as const, icon: FileText, group: isManagement ? 'Lead' : 'Delivery' }] : []),
     { label: 'Activity', icon: Activity, group: isManagement ? 'Work' : 'Workspace' },
+    ...(runsOffice
+      ? [{ label: 'Admin office' as const, icon: Building2, count: officeDesk?.pendingCount ?? 0, group: isManagement ? 'Lead' : 'Workspace' }]
+      : []),
+    { label: 'My office' as const, icon: Inbox, count: officeDesk?.minePending ?? 0, group: isManagement ? 'Work' : 'Workspace' },
     ...((canManagePeople || canEditOrg) ? [{ label: 'Settings' as const, icon: Settings2, group: 'Account' }] : []),
   ]
 
@@ -1656,6 +1668,8 @@ export default function WorkhubDashboardDB({
         else nav('My tasks', { scope: 'all', deadline: notification.title.toLowerCase().includes('overdue') ? 'overdue' : 'all' })
       } else if (notification.entityType === 'management_request') {
         nav(isManagement ? 'Home' : 'Overview')
+      } else if (notification.entityType === 'admin_request') {
+        nav(runsOffice ? 'Admin office' : 'My office')
       } else {
         nav(isManagement ? 'Home' : 'My tasks')
       }
@@ -3019,6 +3033,40 @@ export default function WorkhubDashboardDB({
                 </section>
               </div>
               </div>
+            </>
+          )}
+
+          {activeNav === 'Admin office' && runsOffice && officeDesk && (
+            <>
+              <ViewHeading
+                eyebrow="Finance and admin"
+                title="Admin office"
+                description="Leave, letters, imprest, vendors, documents, and the Kenya compliance calendar."
+              />
+              <AdminOfficeDesk
+                mode="admin"
+                desk={officeDesk}
+                colleagues={pickerPeople.map((person) => ({ id: person.id, firstName: person.firstName, lastName: person.lastName }))}
+                currentUserId={currentUserId}
+                canIssueOffers={isManagement}
+              />
+            </>
+          )}
+
+          {activeNav === 'My office' && officeDesk && (
+            <>
+              <ViewHeading
+                eyebrow="Your requests"
+                title="My office"
+                description="Ask for leave, a letter, imprest, equipment, or printing. Balances already skip weekends and Kenya public holidays."
+              />
+              <AdminOfficeDesk
+                mode="self"
+                desk={officeDesk}
+                colleagues={pickerPeople.map((person) => ({ id: person.id, firstName: person.firstName, lastName: person.lastName }))}
+                currentUserId={currentUserId}
+                canIssueOffers={false}
+              />
             </>
           )}
 

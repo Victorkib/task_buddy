@@ -21,7 +21,7 @@ export const dynamic = 'force-dynamic'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 function isUploadKind(value: unknown): value is UploadKind {
-  return value === 'task_attachment' || value === 'deliverable_evidence' || value === 'user_avatar'
+  return value === 'task_attachment' || value === 'deliverable_evidence' || value === 'user_avatar' || value === 'office_evidence'
 }
 
 export async function POST(request: Request) {
@@ -74,9 +74,9 @@ export async function POST(request: Request) {
     )
   }
 
-  if (kind === 'user_avatar') {
+  if (kind === 'user_avatar' || kind === 'office_evidence') {
     if (entityId !== currentUser.id) {
-      return NextResponse.json({ error: 'You can only change your own profile photo.' }, { status: 403 })
+      return NextResponse.json({ error: 'You can only upload files for yourself.' }, { status: 403 })
     }
   } else if (kind === 'task_attachment') {
     const loaded = await loadTaskAccess(entityId)
