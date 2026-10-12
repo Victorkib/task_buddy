@@ -17,6 +17,7 @@ export function taskAccessFromRow(task: {
   projectId?: string | null
   assignee?: { departmentId?: string | null } | null
   project?: ProjectBits | null
+  helpers?: Array<{ userId: string }> | null
 }): TaskAccess {
   const contributingDepartmentIds =
     task.project?.projectDepartments
@@ -33,6 +34,7 @@ export function taskAccessFromRow(task: {
     projectOwnerId: task.project?.ownerId ?? null,
     projectTeamUserIds: task.project?.teams?.map((entry) => entry.userId) ?? [],
     contributingDepartmentIds,
+    helperIds: task.helpers?.map((entry) => entry.userId) ?? [],
   }
 }
 
@@ -58,6 +60,7 @@ export async function loadTaskAccess(taskId: string) {
     where: eq(tasks.id, taskId),
     with: {
       assignee: true,
+      helpers: true,
       project: {
         with: {
           teams: true,

@@ -8,8 +8,11 @@ function escapeHtml(value: string) {
     .replaceAll('"', '&quot;')
 }
 
-function layout(input: { title: string; preheader: string; bodyHtml: string }) {
+export function mailDocument(input: { title: string; preheader: string; bodyHtml: string; footerHtml?: string }) {
   const brand = mailProductLabel()
+  const footer =
+    input.footerHtml ??
+    `This message was sent by ${escapeHtml(brand)}. If you were not expecting it, you can ignore this email.`
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -36,7 +39,7 @@ function layout(input: { title: string; preheader: string; bodyHtml: string }) {
           </tr>
           <tr>
             <td style="padding:16px 28px 24px;border-top:1px solid #e8eef5;font-size:12px;line-height:1.5;color:#6b7a90;">
-              This message was sent by ${escapeHtml(brand)}. If you were not expecting it, you can ignore this email.
+              ${footer}
             </td>
           </tr>
         </table>
@@ -45,6 +48,10 @@ function layout(input: { title: string; preheader: string; bodyHtml: string }) {
   </table>
 </body>
 </html>`
+}
+
+function layout(input: { title: string; preheader: string; bodyHtml: string }) {
+  return mailDocument(input)
 }
 
 function ctaButton(href: string, label: string) {

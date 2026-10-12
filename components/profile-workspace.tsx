@@ -38,6 +38,7 @@ type Prefs = {
   approvalAlerts: number
   managementRequestAlerts: number
   dailySummary: number
+  weeklyKeepCurrent?: number
 }
 
 type NotificationRow = {
@@ -269,6 +270,14 @@ export function ProfileWorkspace({
               <label>
                 <input type="checkbox" name="dailySummary" defaultChecked={Boolean(preferences.dailySummary)} /> Daily and
                 periodic summaries
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  name="weeklyKeepCurrent"
+                  defaultChecked={preferences.weeklyKeepCurrent !== 0}
+                />{' '}
+                Weekly keep-current email
               </label>
               <button type="submit">Save preferences</button>
             </form>

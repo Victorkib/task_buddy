@@ -9,6 +9,7 @@ import {
   canManageOrg,
   canManageProject,
   canProgressTask,
+  canJoinTask,
   canSeeProject,
   canSeeTask,
   canSubmitLeadershipRequest,
@@ -109,6 +110,16 @@ assert(canSeeProject(otherHead, contributingProject), 'contributing head can see
 assert(!canManageProject(otherHead, contributingProject), 'contributing head cannot reconfigure the project')
 assert(canManageProject(head, homeProject), 'home department head manages the project')
 assert(canSeeProject(otherEmployee, contributingProject), 'teammate can see the project')
+
+const helpedTask = { ...otherDeptTask, helperIds: ['emp'] }
+assert(canSeeTask(employee, helpedTask) && canProgressTask(employee, helpedTask), 'helper can see and move the task')
+assert(!canEditTask(employee, helpedTask), 'helper cannot change the lead or the task details')
+const teammateTask = { ...otherDeptTask, projectTeamUserIds: ['emp'] }
+assert(canSeeTask(employee, teammateTask), 'project teammate can see the task')
+assert(!canProgressTask(employee, teammateTask) && !canEditTask(employee, teammateTask), 'seeing a project task does not grant edit rights')
+assert(canJoinTask(employee, teammateTask), 'project teammate can join the task')
+assert(!canJoinTask(employee, { ...teammateTask, helperIds: ['emp'] }), 'a helper does not join twice')
+assert(!canJoinTask(employee, { ...teammateTask, assigneeId: 'emp' }), 'the lead does not join as a helper')
 
 assert(canInvite(md, { roleKey: 'employee', departmentId: 'dept-1' }), 'md can invite staff')
 assert(!canInvite(md, { roleKey: 'admin', departmentId: null }), 'md cannot invite admin')

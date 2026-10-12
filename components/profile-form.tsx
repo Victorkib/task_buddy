@@ -23,6 +23,7 @@ type Prefs = {
   approvalAlerts: number
   managementRequestAlerts: number
   dailySummary: number
+  weeklyKeepCurrent?: number
 }
 
 export function ProfileForm({
@@ -308,6 +309,14 @@ export function ProfileForm({
           <label>
             <input type="checkbox" name="dailySummary" defaultChecked={Boolean(preferences.dailySummary)} /> Daily and
             periodic summaries
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              name="weeklyKeepCurrent"
+              defaultChecked={preferences.weeklyKeepCurrent !== 0}
+            />{' '}
+            Weekly keep-current email
           </label>
           {prefsOk ? <p className="form-ok">{prefsOk}</p> : null}
           <button className="create-button" type="submit" disabled={pending}>

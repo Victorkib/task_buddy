@@ -285,6 +285,23 @@ export const taskComments = pgTable(
   (table) => [index('task_comments_task_idx').on(table.taskId)],
 )
 
+export const taskHelpers = pgTable(
+  'task_helpers',
+  {
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('task_helpers_pk').on(table.taskId, table.userId),
+    index('task_helpers_user_idx').on(table.userId),
+  ],
+)
+
 export const taskAttachments = pgTable(
   'task_attachments',
   {
@@ -462,6 +479,7 @@ export const notificationPreferences = pgTable('notification_preferences', {
   approvalAlerts: integer('approval_alerts').notNull().default(1),
   managementRequestAlerts: integer('management_request_alerts').notNull().default(1),
   dailySummary: integer('daily_summary').notNull().default(1),
+  weeklyKeepCurrent: integer('weekly_keep_current').notNull().default(1),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 })
 
@@ -484,6 +502,22 @@ export const deadlineAlertLog = pgTable(
   (table) => [
     index('deadline_alert_log_user_idx').on(table.userId),
     index('deadline_alert_log_date_idx').on(table.alertDate),
+  ],
+)
+
+export const keepCurrentSends = pgTable(
+  'keep_current_sends',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    weekKey: text('week_key').notNull(),
+    sentAt: timestamp('sent_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('keep_current_sends_user_week_uidx').on(table.userId, table.weekKey),
+    index('keep_current_sends_week_idx').on(table.weekKey),
   ],
 )
 
@@ -885,6 +919,7 @@ export const tasksRelations = relations(tasks, ({ one, many }) => ({
   assignee: one(users, { fields: [tasks.assigneeId], references: [users.id], relationName: 'assignee' }),
   createdBy: one(users, { fields: [tasks.createdById], references: [users.id], relationName: 'createdBy' }),
   comments: many(taskComments),
+  helpers: many(taskHelpers),
   attachments: many(taskAttachments),
   reports: many(taskReports),
   approvals: many(taskApprovals),
@@ -1023,6 +1058,11 @@ export const projectMilestoneTasksRelations = relations(projectMilestoneTasks, (
 export const taskCommentsRelations = relations(taskComments, ({ one }) => ({
   task: one(tasks, { fields: [taskComments.taskId], references: [tasks.id] }),
   user: one(users, { fields: [taskComments.userId], references: [users.id] }),
+}))
+
+export const taskHelpersRelations = relations(taskHelpers, ({ one }) => ({
+  task: one(tasks, { fields: [taskHelpers.taskId], references: [tasks.id] }),
+  user: one(users, { fields: [taskHelpers.userId], references: [users.id] }),
 }))
 
 export const taskAttachmentsRelations = relations(taskAttachments, ({ one }) => ({

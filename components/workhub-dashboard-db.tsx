@@ -21,6 +21,7 @@ import {
   Loader2,
   MessageSquare,
   Plus,
+  Presentation,
   Settings2,
   ShieldCheck,
   Target,
@@ -98,6 +99,7 @@ import {
   exportReportCsv,
   updateManagementRequestStatus,
   updateNotificationPreferences,
+  sendKeepCurrentReminders,
   sendWorkspaceReminder,
   promoteWorkRequest,
   submitDeliverable,
@@ -107,8 +109,11 @@ import {
   updateTaskProgress,
   updateTaskStatus,
   setTaskPlacement,
+  addTaskHelper,
+  removeTaskHelper,
 } from '@/app/actions'
 import { cancelInvite, resendInvite } from '@/app/invite-actions'
+import { PresentMode } from '@/components/present-mode'
 import { CreateSelfTaskDialog } from '@/components/create-self-task-dialog'
 import { CreateDepartmentDialog } from '@/components/create-department-dialog'
 import { RemovePersonDialog } from '@/components/remove-person-dialog'
@@ -116,6 +121,7 @@ import { EditPersonDialog } from '@/components/edit-person-dialog'
 import type { Person } from '@/lib/types'
 import { taskCategoryEnum, taskPriorityEnum, taskStatusEnum } from '@/lib/db/schema'
 import { PRODUCT_NAME } from '@/lib/branding'
+import { latestTaskComment, type LinkedTaskView, type TaskCollaborator } from '@/lib/task-collaboration'
 
 type View = WorkspaceView
 
@@ -166,6 +172,8 @@ type DbTask = {
   projectHomeDepartmentId?: string | null
   contributingDepartmentIds?: string[]
   projectTeamUserIds?: string[]
+  helperIds?: string[]
+  helpers?: TaskCollaborator[]
   comments?: DbComment[]
   attachments?: DbAttachment[]
   approvals?: Array<{
@@ -190,11 +198,11 @@ type DbTask = {
   }>
   blockingDependencies?: Array<{
     id: string
-    blockedTask: { id: string; title: string; status: TaskStatus; dueDate: string | Date | null }
+    blockedTask: LinkedTaskView
   }>
   blockedByDependencies?: Array<{
     id: string
-    blockingTask: { id: string; title: string; status: TaskStatus; dueDate: string | Date | null }
+    blockingTask: LinkedTaskView
   }>
   reports?: Array<{
     id: string
@@ -378,10 +386,12 @@ type DbDepartment = {
 type DbResponsibility = {
   id: string
   title: string
+  description?: string | null
   category: string
   status: string
   owner: { id?: string; initials: string; firstName: string; lastName: string; avatarUrl?: string | null; avatarColor?: string | null }
   department?: { name: string } | null
+  assignees?: { userId: string }[]
 }
 
 type DbActivityEvent = {
@@ -465,6 +475,7 @@ type NotificationPreferences = {
   approvalAlerts: number
   managementRequestAlerts: number
   dailySummary: number
+  weeklyKeepCurrent?: number
 }
 
 type Metrics = {
@@ -517,6 +528,7 @@ export default function WorkhubDashboardDB({
     approvalAlerts: 1,
     managementRequestAlerts: 1,
     dailySummary: 1,
+    weeklyKeepCurrent: 1,
   },
   workspaceRoles = [],
   workspaceTeams = [],
@@ -637,6 +649,10 @@ export default function WorkhubDashboardDB({
   const [clockLabel, setClockLabel] = useState('')
   const [hello, setHello] = useState('Hello')
   const [isPending, startTransition] = useTransition()
+  const [keepCurrentConfirm, setKeepCurrentConfirm] = useState<null | 'send' | 'resend'>(null)
+  const [keepCurrentDetail, setKeepCurrentDetail] = useState<string | null>(null)
+  const [keepCurrentError, setKeepCurrentError] = useState<string | null>(null)
+  const [keepCurrentResend, setKeepCurrentResend] = useState(false)
 
   const currentUser = useMemo(
     () => people.find((p) => p.id === currentUserId) ?? null,
@@ -772,7 +788,7 @@ export default function WorkhubDashboardDB({
     ...((canManagePeople || canEditOrg) ? [{ label: 'Settings' as const, icon: Settings2, group: 'Account' }] : []),
   ]
 
-  const allowedViews = new Set(navItems.map((item) => item.label))
+  const allowedViews = new Set<View>([...navItems.map((item) => item.label), 'Present'])
   const defaultLandingView: View = isManagement ? 'Home' : isDepartmentLeader ? 'Departments' : 'My tasks'
   const activeNav = resolveWorkspaceView(
     searchParams.get('view') ?? initialView,
@@ -843,6 +859,33 @@ export default function WorkhubDashboardDB({
     router.push(`/?${params.toString()}`, { scroll: false })
   }
 
+  function openPresent(from: 'My tasks' | 'Responsibilities') {
+    setMobileOpen(false)
+    setCommandOpen(false)
+    setShowNotifications(false)
+    setShowProfile(false)
+    const params = new URLSearchParams()
+    params.set('view', 'Present')
+    params.set('from', from)
+    router.push(`/?${params.toString()}`, { scroll: false })
+  }
+
+  function confirmKeepCurrentSend() {
+    const resend = keepCurrentConfirm === 'resend'
+    setKeepCurrentConfirm(null)
+    setKeepCurrentError(null)
+    startTransition(async () => {
+      const result = await sendKeepCurrentReminders({ resend })
+      setKeepCurrentResend(Boolean(result.resendAvailable))
+      if (result.error) {
+        setKeepCurrentError(result.error)
+        setKeepCurrentDetail(result.detail && result.detail !== result.error ? result.detail : null)
+        return
+      }
+      setKeepCurrentDetail(result.detail)
+    })
+  }
+
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
@@ -882,7 +925,11 @@ export default function WorkhubDashboardDB({
   const currentProjectId = selectedProjectId
   const currentDepartmentId = selectedDepartmentId
   const currentProjectTaskIds = selectedProject?.taskIds ?? []
-  const taskSource = currentView === 'My tasks' && !allWorkScope ? initialMyTasks : tasks
+  const liveTaskById = new Map(tasks.map((task) => [task.id, task]))
+  const taskSource =
+    currentView === 'My tasks' && !allWorkScope
+      ? initialMyTasks.map((task) => liveTaskById.get(task.id) ?? task)
+      : tasks
   const statusCounts = useMemo(() => {
     const counts = Object.fromEntries(TASK_STATUSES.map((status) => [status, 0])) as Record<TaskStatus, number>
     for (const task of taskSource) counts[task.status] += 1
@@ -1141,8 +1188,31 @@ export default function WorkhubDashboardDB({
         return
       }
       const blocking = tasks.find((entry) => entry.id === dependencyBlockingTaskId)
-      const shouldBlock = blocking ? blocking.status !== 'completed' : true
+      const shouldBlock =
+        blocking && selectedTask.status !== 'completed' && selectedTask.status !== 'cancelled'
+          ? blocking.status !== 'completed'
+          : false
       const dependencyId = res && 'id' in res && res.id ? res.id : `local-${dependencyBlockingTaskId}`
+      const blockingView = {
+        id: dependencyBlockingTaskId,
+        title: blocking?.title ?? 'Blocking task',
+        status: blocking?.status ?? 'in_progress',
+        progress: blocking?.progress,
+        dueDate: blocking?.dueDate ?? null,
+        assignee: blocking?.assignee ?? null,
+        helpers: blocking?.helpers ?? [],
+        latestComment: latestTaskComment(blocking?.comments),
+      }
+      const blockedView = {
+        id: selectedTask.id,
+        title: selectedTask.title,
+        status: shouldBlock ? 'blocked' : selectedTask.status,
+        progress: selectedTask.progress,
+        dueDate: selectedTask.dueDate ?? null,
+        assignee: selectedTask.assignee ?? null,
+        helpers: selectedTask.helpers ?? [],
+        latestComment: latestTaskComment(selectedTask.comments),
+      }
       setSelectedTask((current) =>
         current?.id === selectedTask.id
           ? {
@@ -1150,22 +1220,35 @@ export default function WorkhubDashboardDB({
               status: shouldBlock ? 'blocked' : current.status,
               blockedByDependencies: [
                 ...(current.blockedByDependencies ?? []),
-                {
-                  id: dependencyId,
-                  blockingTask: {
-                    id: dependencyBlockingTaskId,
-                    title: blocking?.title ?? 'Blocking task',
-                    status: blocking?.status ?? 'in_progress',
-                    dueDate: blocking?.dueDate ?? null,
-                  },
-                },
+                { id: dependencyId, blockingTask: blockingView },
               ],
             }
           : current,
       )
-      if (shouldBlock) {
-        setTasks((current) => current.map((entry) => (entry.id === selectedTask.id ? { ...entry, status: 'blocked' } : entry)))
-      }
+      setTasks((current) =>
+        current.map((entry) => {
+          if (entry.id === selectedTask.id) {
+            return {
+              ...entry,
+              status: shouldBlock ? 'blocked' : entry.status,
+              blockedByDependencies: [
+                ...(entry.blockedByDependencies ?? []),
+                { id: dependencyId, blockingTask: blockingView },
+              ],
+            }
+          }
+          if (entry.id === dependencyBlockingTaskId) {
+            return {
+              ...entry,
+              blockingDependencies: [
+                ...(entry.blockingDependencies ?? []),
+                { id: dependencyId, blockedTask: blockedView },
+              ],
+            }
+          }
+          return entry
+        }),
+      )
       setDependencyBlockingTaskId('')
       router.refresh()
     })
@@ -1174,6 +1257,62 @@ export default function WorkhubDashboardDB({
   function removeTaskFromLocalState(taskId: string) {
     setTasks((current) => current.filter((task) => task.id !== taskId))
     setSelectedTask((current) => (current?.id === taskId ? null : current))
+  }
+
+  function withHelper(task: DbTask, helper: TaskCollaborator & { id: string }) {
+    if (task.id !== selectedTask?.id) return task
+    const helpers = [...(task.helpers ?? []).filter((person) => person.id !== helper.id), helper]
+    const helperIds = [...new Set([...(task.helperIds ?? []), helper.id])]
+    return { ...task, helpers, helperIds }
+  }
+
+  function withoutHelper(task: DbTask, userId: string) {
+    if (task.id !== selectedTask?.id) return task
+    return {
+      ...task,
+      helpers: (task.helpers ?? []).filter((person) => person.id !== userId),
+      helperIds: (task.helperIds ?? []).filter((id) => id !== userId),
+    }
+  }
+
+  function handleAddHelper(userId: string) {
+    if (!selectedTask || !userId) return
+    startTransition(async () => {
+      setDetailsError(null)
+      const res = await addTaskHelper(selectedTask.id, userId)
+      if (res && 'error' in res && res.error) {
+        setDetailsError(res.error)
+        return
+      }
+      const helper = res && 'helper' in res ? res.helper : null
+      if (!helper?.id) return
+      setSelectedTask((current) => (current ? withHelper(current, helper) : current))
+      setTasks((current) => current.map((task) => withHelper(task, helper)))
+      router.refresh()
+    })
+  }
+
+  function handleRemoveHelper(userId: string) {
+    if (!selectedTask) return
+    startTransition(async () => {
+      setDetailsError(null)
+      const res = await removeTaskHelper(selectedTask.id, userId)
+      if (res && 'error' in res && res.error) {
+        setDetailsError(res.error)
+        return
+      }
+      setSelectedTask((current) => (current ? withoutHelper(current, userId) : current))
+      setTasks((current) => current.map((task) => withoutHelper(task, userId)))
+      router.refresh()
+    })
+  }
+
+  function handleOpenLinkedTask(taskId: string) {
+    const match = tasks.find((task) => task.id === taskId) ?? initialMyTasks.find((task) => task.id === taskId)
+    if (match) {
+      setSelectedTask(match)
+      setDetailTab('overview')
+    }
   }
 
   function handleDeleteDependency(dependencyId: string) {
@@ -1193,6 +1332,13 @@ export default function WorkhubDashboardDB({
               blockingDependencies: (current.blockingDependencies ?? []).filter((item) => item.id !== dependencyId),
             }
           : current,
+      )
+      setTasks((current) =>
+        current.map((entry) => ({
+          ...entry,
+          blockedByDependencies: (entry.blockedByDependencies ?? []).filter((item) => item.id !== dependencyId),
+          blockingDependencies: (entry.blockingDependencies ?? []).filter((item) => item.id !== dependencyId),
+        })),
       )
       router.refresh()
     })
@@ -1826,6 +1972,7 @@ export default function WorkhubDashboardDB({
             <div className={`priority-bar priority-${task.priority}`} />
             <div className="task-main">
               <strong>{task.title}</strong>
+              <TaskCollabLine task={task} />
               <span>
                 {categoryLabel(task.category, task.categoryCustom)}
                 {task.projectTitle ? (
@@ -2069,7 +2216,68 @@ export default function WorkhubDashboardDB({
     </div>
   )
 
+  const presentPerson = useMemo(
+    () => ({
+      name: currentUser ? fullName(currentUser) : 'Team member',
+      jobTitle: currentUser?.jobTitle ?? 'Team member',
+      department:
+        currentUser?.department?.name ??
+        initialDepartments.find((department) => department.id === currentUserDepartmentId)?.name ??
+        'Unassigned',
+    }),
+    [currentUser, currentUserDepartmentId, initialDepartments],
+  )
+  const presentResponsibilities = useMemo(
+    () =>
+      responsibilityRows.flatMap((item) => {
+        if (item.status === 'paused' || item.status === 'completed') return []
+        const owns = item.owner.id === currentUserId
+        const supporting = item.assignees?.some((entry) => entry.userId === currentUserId) ?? false
+        if (!owns && !supporting) return []
+        return [
+          {
+            id: item.id,
+            title: item.title,
+            description: item.description ?? null,
+            status: item.status,
+            role: owns ? ('owner' as const) : ('supporting' as const),
+            departmentName: item.department?.name ?? null,
+          },
+        ]
+      }),
+    [responsibilityRows, currentUserId],
+  )
+  const presentTasks = useMemo(
+    () =>
+      initialMyTasks.flatMap((task) => {
+        if (task.status === 'completed' || task.status === 'cancelled') return []
+        const due = task.dueDate ? toDateInputValue(task.dueDate) : ''
+        return [
+          {
+            id: task.id,
+            title: task.title,
+            description: task.description ?? null,
+            status: task.status,
+            dueDate: due || null,
+            role: task.assigneeId === currentUserId ? ('assignee' as const) : ('helper' as const),
+            departmentName: task.department?.name ?? null,
+            projectTitle: task.projectTitle ?? null,
+          },
+        ]
+      }),
+    [initialMyTasks, currentUserId],
+  )
+
   return (
+    <>
+    {activeNav === 'Present' ? (
+      <PresentMode
+        person={presentPerson}
+        responsibilities={presentResponsibilities}
+        tasks={presentTasks}
+        onExit={() => nav(searchParams.get('from') === 'Responsibilities' ? 'Responsibilities' : 'My tasks')}
+      />
+    ) : null}
     <WorkhubShell
       collapsed={collapsed}
       onToggleCollapsed={toggleCollapsed}
@@ -2165,6 +2373,7 @@ export default function WorkhubDashboardDB({
               <label><input type="checkbox" name="approvalAlerts" defaultChecked={Boolean(initialNotificationPreferences.approvalAlerts)} /> Approval alerts</label>
               <label><input type="checkbox" name="managementRequestAlerts" defaultChecked={Boolean(initialNotificationPreferences.managementRequestAlerts)} /> Management request alerts</label>
               <label><input type="checkbox" name="dailySummary" defaultChecked={Boolean(initialNotificationPreferences.dailySummary)} /> Daily and periodic summaries</label>
+              <label><input type="checkbox" name="weeklyKeepCurrent" defaultChecked={initialNotificationPreferences.weeklyKeepCurrent !== 0} /> Weekly keep-current email</label>
               <button type="submit">Save preferences</button>
             </form>
             <button
@@ -2486,6 +2695,7 @@ export default function WorkhubDashboardDB({
                       : 'Everything assigned to you, organized by urgency.'
                 }
                 actions={[
+                  { label: 'Present', onClick: () => openPresent('My tasks'), variant: 'outline' as const, icon: 'present' as const },
                   ...(canLogOwnTask && !allWorkScope
                     ? [{ label: 'Add my task', onClick: () => setShowSelfTask(true), variant: 'primary' as const }]
                     : []),
@@ -2556,7 +2766,17 @@ export default function WorkhubDashboardDB({
 
           {activeNav === 'Responsibilities' && (
             <>
-              <ViewHeading eyebrow="Accountability" title="Responsibilities" description="Clear leads for recurring and strategic work." action={canCreateWork ? () => setShowCreateResp(true) : undefined} actionLabel="Add responsibility" />
+              <ViewHeading
+                eyebrow="Accountability"
+                title="Responsibilities"
+                description="Clear leads for recurring and strategic work."
+                actions={[
+                  { label: 'Present', onClick: () => openPresent('Responsibilities'), variant: 'outline', icon: 'present' },
+                  ...(canCreateWork
+                    ? [{ label: 'Add responsibility', onClick: () => setShowCreateResp(true), variant: 'primary' as const }]
+                    : []),
+                ]}
+              />
               <section className="panel table-panel">
                 <div className="panel-heading">
                   <div><h2>Responsibility register</h2><p>Leads, cadence, and current status</p></div>
@@ -3148,6 +3368,66 @@ export default function WorkhubDashboardDB({
                   roles={workspaceRoles}
                 />
               )}
+              {canEditOrg ? (
+                <section className="panel keep-current-panel" style={{ marginTop: 18 }}>
+                  <div className="panel-heading">
+                    <div>
+                      <h2>Weekly keep-current email</h2>
+                      <p>Email people to update what they already have in Task Buddy.</p>
+                    </div>
+                  </div>
+                  <p className="keep-current-copy">
+                    Sends a check-in to each active person who has open tasks or responsibilities and still has the weekly email turned on. Invited accounts, inactive accounts, and empty queues are left out.
+                  </p>
+                  {keepCurrentConfirm ? (
+                    <div className="keep-current-confirm" role="status">
+                      <strong>{keepCurrentConfirm === 'resend' ? 'Send again this week?' : 'Send the check-in now?'}</strong>
+                      <span>
+                        {keepCurrentConfirm === 'resend'
+                          ? 'People who already received this week’s email will get another copy.'
+                          : 'This emails everyone who qualifies. If this week was already sent, those people are skipped unless you choose to send again.'}
+                      </span>
+                      <div className="keep-current-actions">
+                        <button type="button" className="create-button" disabled={isPending} onClick={confirmKeepCurrentSend}>
+                          {isPending ? 'Sending…' : keepCurrentConfirm === 'resend' ? 'Send again this week' : 'Send now'}
+                        </button>
+                        <button type="button" className="filter-pill" disabled={isPending} onClick={() => setKeepCurrentConfirm(null)}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="keep-current-actions">
+                      <button
+                        type="button"
+                        className="create-button"
+                        disabled={isPending}
+                        onClick={() => {
+                          setKeepCurrentError(null)
+                          setKeepCurrentConfirm('send')
+                        }}
+                      >
+                        Send reminder
+                      </button>
+                      {keepCurrentResend ? (
+                        <button
+                          type="button"
+                          className="filter-pill"
+                          disabled={isPending}
+                          onClick={() => {
+                            setKeepCurrentError(null)
+                            setKeepCurrentConfirm('resend')
+                          }}
+                        >
+                          Send again this week
+                        </button>
+                      ) : null}
+                    </div>
+                  )}
+                  {keepCurrentError ? <p className="form-error" role="alert">{keepCurrentError}</p> : null}
+                  {keepCurrentDetail ? <p className="form-ok" role="status">{keepCurrentDetail}</p> : null}
+                </section>
+              ) : null}
               <section className="panel" style={{ marginTop: 18 }}>
                 <div className="panel-heading">
                     <div><h2>Your alert preferences</h2><p>These also live on your profile page and in the profile menu</p></div>
@@ -3166,6 +3446,7 @@ export default function WorkhubDashboardDB({
                   <label><input type="checkbox" name="approvalAlerts" defaultChecked={Boolean(initialNotificationPreferences.approvalAlerts)} /> Approval alerts</label>
                   <label><input type="checkbox" name="managementRequestAlerts" defaultChecked={Boolean(initialNotificationPreferences.managementRequestAlerts)} /> Management request alerts</label>
                   <label><input type="checkbox" name="dailySummary" defaultChecked={Boolean(initialNotificationPreferences.dailySummary)} /> Daily and periodic summaries</label>
+                  <label><input type="checkbox" name="weeklyKeepCurrent" defaultChecked={initialNotificationPreferences.weeklyKeepCurrent !== 0} /> Weekly keep-current email</label>
                   <button className="create-button" type="submit">Save preferences</button>
                 </form>
               </section>
@@ -3299,6 +3580,9 @@ export default function WorkhubDashboardDB({
           onDependencyBlockingTaskId={setDependencyBlockingTaskId}
           onCreateDependency={handleCreateDependency}
           onDeleteDependency={handleDeleteDependency}
+          onAddHelper={handleAddHelper}
+          onRemoveHelper={handleRemoveHelper}
+          onOpenTask={handleOpenLinkedTask}
           onDeleteTask={() => handleDeleteTaskById(selectedTask.id)}
           onReportsChange={(reports) => mergeTaskReports(selectedTask.id, reports)}
         />
@@ -3462,6 +3746,7 @@ export default function WorkhubDashboardDB({
         />
       )}
     </WorkhubShell>
+    </>
   )
 }
 
@@ -3478,7 +3763,7 @@ function ViewHeading({
   description: string
   action?: () => void
   actionLabel?: string
-  actions?: { label: string; onClick: () => void; variant?: 'primary' | 'outline' }[]
+  actions?: { label: string; onClick: () => void; variant?: 'primary' | 'outline'; icon?: 'plus' | 'present' | 'download' }[]
 }) {
   const resolvedActions =
     actions ??
@@ -3498,22 +3783,25 @@ function ViewHeading({
       </div>
       {resolvedActions.length > 0 ? (
         <div className="welcome-actions">
-          {resolvedActions.map((entry) =>
-            entry.variant === 'outline' ? (
+          {resolvedActions.map((entry) => {
+            const icon =
+              entry.icon === 'present' ? (
+                <Presentation data-icon="inline-start" />
+              ) : entry.icon === 'download' || entry.label.toLowerCase().includes('download') ? (
+                <Download data-icon="inline-start" />
+              ) : (
+                <Plus data-icon="inline-start" />
+              )
+            return entry.variant === 'outline' ? (
               <Button key={entry.label} variant="outline" onClick={entry.onClick}>
-                <Plus data-icon="inline-start" /> {entry.label}
+                {icon} {entry.label}
               </Button>
             ) : (
               <Button key={entry.label} className="create-button" onClick={entry.onClick}>
-                {entry.label.toLowerCase().includes('download') ? (
-                  <Download data-icon="inline-start" />
-                ) : (
-                  <Plus data-icon="inline-start" />
-                )}{' '}
-                {entry.label}
+                {icon} {entry.label}
               </Button>
-            ),
-          )}
+            )
+          })}
         </div>
       ) : null}
     </div>
@@ -3563,6 +3851,22 @@ function MetricCard({
     <article className={`metric-card ${featured ? 'metric-feature' : ''}`}>
       {content}
     </article>
+  )
+}
+
+function TaskCollabLine({ task }: { task: DbTask }) {
+  const helpers = task.helpers ?? []
+  const linkCount = (task.blockedByDependencies?.length ?? 0) + (task.blockingDependencies?.length ?? 0)
+  if (helpers.length === 0 && linkCount === 0) return null
+  const shown = helpers.slice(0, 2).map((person) => person.firstName)
+  const extra = helpers.length - shown.length
+  const withLabel = shown.length === 0 ? '' : `with ${shown.join(', ')}${extra > 0 ? ` +${extra}` : ''}`
+  const linkLabel = linkCount === 0 ? '' : `${linkCount} linked`
+  return (
+    <span className="task-collab">
+      {withLabel ? <em>{withLabel}</em> : null}
+      {linkLabel ? <em>{linkLabel}</em> : null}
+    </span>
   )
 }
 

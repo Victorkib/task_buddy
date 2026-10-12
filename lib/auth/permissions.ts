@@ -161,6 +161,7 @@ export type TaskAccess = {
   projectOwnerId?: string | null
   projectTeamUserIds?: string[]
   contributingDepartmentIds?: string[]
+  helperIds?: string[]
 }
 
 export type ProjectAccess = {
@@ -183,7 +184,15 @@ function isContributingDepartmentOnTask(user: Actor, task: TaskAccess) {
   return Boolean(user?.departmentId && task.contributingDepartmentIds?.includes(user.departmentId))
 }
 
-export function canSeeTask(user: Actor, task: TaskAccess) {
+function isTaskHelper(user: Actor, task: TaskAccess) {
+  return Boolean(user && task.helperIds?.includes(user.id))
+}
+
+function isProjectTeammate(user: Actor, task: TaskAccess) {
+  return Boolean(user && task.projectTeamUserIds?.includes(user.id))
+}
+
+function canWorkTask(user: Actor, task: TaskAccess) {
   if (!user) return false
   if (isManagement(user)) return true
   if (task.assigneeId === user.id) return true
@@ -195,8 +204,19 @@ export function canSeeTask(user: Actor, task: TaskAccess) {
   return false
 }
 
+export function canSeeTask(user: Actor, task: TaskAccess) {
+  return canWorkTask(user, task) || isTaskHelper(user, task) || isProjectTeammate(user, task)
+}
+
 export function canProgressTask(user: Actor, task: TaskAccess) {
-  return canSeeTask(user, task)
+  return canWorkTask(user, task) || isTaskHelper(user, task)
+}
+
+export function canJoinTask(user: Actor, task: TaskAccess) {
+  if (!user) return false
+  if (task.assigneeId === user.id) return false
+  if (task.helperIds?.includes(user.id)) return false
+  return isProjectTeammate(user, task)
 }
 
 export function canEditTask(user: Actor, task: TaskAccess) {

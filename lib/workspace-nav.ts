@@ -3,6 +3,7 @@ export const WORKSPACE_VIEWS = [
   'Overview',
   'My tasks',
   'Responsibilities',
+  'Present',
   'Departments',
   'Projects',
   'Reports',

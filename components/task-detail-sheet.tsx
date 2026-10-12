@@ -13,6 +13,7 @@ import type { TaskProjectOption } from '@/components/create-task-dialog'
 import { TASK_PRIORITY_LABELS, TASK_STATUS_LABELS } from '@/lib/constants'
 import { taskCategoryEnum, taskStatusEnum } from '@/lib/db/schema'
 import { categoryLabel, formatDue, formatRelative, fullName, toDateInputValue } from '@/lib/format'
+import type { LinkedTaskView, TaskCollaborator } from '@/lib/task-collaboration'
 import type { Person } from '@/lib/types'
 import type { UploadedFile } from '@/lib/uploads/client'
 
@@ -46,6 +47,8 @@ type DetailTask = {
   dueDate: string | Date | null
   startDate?: string | Date | null
   assignee: { initials: string; firstName: string; lastName: string; avatarUrl?: string | null; avatarColor?: string | null } | null
+  helpers?: TaskCollaborator[]
+  projectTeamUserIds?: string[]
   department: { id?: string; name: string; color?: string } | null
   projectId?: string | null
   projectTitle?: string | null
@@ -82,8 +85,8 @@ type DetailTask = {
     decisionReason?: string | null
   }>
   reports?: TaskReport[]
-  blockingDependencies?: Array<{ id: string; blockedTask: { id: string; title: string } }>
-  blockedByDependencies?: Array<{ id: string; blockingTask: { id: string; title: string } }>
+  blockingDependencies?: Array<{ id: string; blockedTask: LinkedTaskView }>
+  blockedByDependencies?: Array<{ id: string; blockingTask: LinkedTaskView }>
 }
 
 type TaskPatch = {
@@ -195,6 +198,137 @@ function personDepartmentId(person: Person) {
   return person.departmentId ?? ''
 }
 
+function peopleOptions(people: Person[], departments: DepartmentOption[]) {
+  const grouped = departments.map((department) => ({
+    id: department.id,
+    name: department.name,
+    members: people.filter((person) => personDepartmentId(person) === department.id),
+  }))
+  const unassigned = people.filter((person) => !personDepartmentId(person))
+  return { grouped, unassigned }
+}
+
+function HelperField({
+  task,
+  people,
+  departments,
+  currentUserId,
+  canEdit,
+  isPending,
+  helperToAdd,
+  onHelperToAdd,
+  onAddHelper,
+  onRemoveHelper,
+}: {
+  task: DetailTask
+  people: Person[]
+  departments: DepartmentOption[]
+  currentUserId: string
+  canEdit: boolean
+  isPending: boolean
+  helperToAdd: string
+  onHelperToAdd: (value: string) => void
+  onAddHelper: (userId: string) => void
+  onRemoveHelper: (userId: string) => void
+}) {
+  const helpers = task.helpers ?? []
+  const taken = new Set([task.assigneeId, ...helpers.map((person) => person.id)].filter(Boolean))
+  const available = people.filter((person) => !taken.has(person.id))
+  const canJoin = Boolean(task.projectTeamUserIds?.includes(currentUserId) && !taken.has(currentUserId))
+  const { grouped, unassigned } = peopleOptions(available, departments)
+  return (
+    <div className="form-field">
+      <span>Working with</span>
+      {helpers.length === 0 ? <p className="td-muted">No one else is on this task yet.</p> : (
+        <div className="td-helper-list">
+          {helpers.map((person) => (
+            <span key={person.id} className="td-helper">
+              <UserAvatar initials={person.initials} url={person.avatarUrl} color={person.avatarColor} size="sm" />
+              <span>{fullName(person)}</span>
+              {(canEdit || person.id === currentUserId) && person.id ? (
+                <button type="button" aria-label={`Remove ${fullName(person)}`} disabled={isPending} onClick={() => onRemoveHelper(person.id!)}>
+                  <X aria-hidden="true" />
+                </button>
+              ) : null}
+            </span>
+          ))}
+        </div>
+      )}
+      {canJoin ? (
+        <button type="button" className="filter-pill selected" disabled={isPending} onClick={() => onAddHelper(currentUserId)}>
+          Join this task
+        </button>
+      ) : null}
+      {canEdit && available.length > 0 ? (
+        <div className="td-inline-form">
+          <select value={helperToAdd} onChange={(event) => onHelperToAdd(event.target.value)} disabled={isPending} aria-label="Add a helper">
+            <option value="">Add someone</option>
+            {grouped.map((department) => department.members.length === 0 ? null : (
+              <optgroup key={department.id} label={department.name}>
+                {department.members.map((person) => (
+                  <option key={person.id} value={person.id}>{person.firstName} {person.lastName}</option>
+                ))}
+              </optgroup>
+            ))}
+            {unassigned.length > 0 ? (
+              <optgroup label="Unassigned">
+                {unassigned.map((person) => (
+                  <option key={person.id} value={person.id}>{person.firstName} {person.lastName}</option>
+                ))}
+              </optgroup>
+            ) : null}
+          </select>
+          <button
+            className="filter-pill selected"
+            type="button"
+            disabled={isPending || !helperToAdd}
+            onClick={() => {
+              onAddHelper(helperToAdd)
+              onHelperToAdd('')
+            }}
+          >
+            Add
+          </button>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function LinkedTaskCard({
+  task,
+  canRemove,
+  removeLabel,
+  pending,
+  onOpen,
+  onRemove,
+}: {
+  task: LinkedTaskView
+  canRemove: boolean
+  removeLabel: string
+  pending: boolean
+  onOpen: () => void
+  onRemove: () => void
+}) {
+  const names = [task.assignee ? fullName(task.assignee) : null, ...task.helpers.map((person) => fullName(person))].filter(Boolean)
+  const note = task.latestComment
+  return (
+    <article className="td-link-card">
+      <header>
+        <button type="button" className="td-link-open" onClick={onOpen}>{task.title}</button>
+        {canRemove ? (
+          <button type="button" aria-label={removeLabel} disabled={pending} onClick={onRemove}>
+            <X aria-hidden="true" />
+          </button>
+        ) : null}
+      </header>
+      <p>{TASK_STATUS_LABELS[task.status as TaskStatus] ?? task.status}{typeof task.progress === 'number' ? ` · ${task.progress}%` : ''}</p>
+      <p>{names.length > 0 ? names.join(', ') : 'No one assigned'}</p>
+      {note ? <p className="td-link-note">{note.user ? `${fullName(note.user)}: ` : ''}{note.body}</p> : <p className="td-muted">No notes yet.</p>}
+    </article>
+  )
+}
+
 export function TaskDetailSheet({
   task,
   people,
@@ -258,6 +392,9 @@ export function TaskDetailSheet({
   onDependencyBlockingTaskId,
   onCreateDependency,
   onDeleteDependency,
+  onAddHelper,
+  onRemoveHelper,
+  onOpenTask,
   onDeleteTask,
   projects = [],
   canCreateWork = false,
@@ -327,6 +464,9 @@ export function TaskDetailSheet({
   onDependencyBlockingTaskId: (value: string) => void
   onCreateDependency: () => void
   onDeleteDependency: (id: string) => void
+  onAddHelper: (userId: string) => void
+  onRemoveHelper: (userId: string) => void
+  onOpenTask: (taskId: string) => void
   onDeleteTask: () => void
   projects?: TaskProjectOption[]
   canCreateWork?: boolean
@@ -357,6 +497,7 @@ export function TaskDetailSheet({
   const [reportSaving, setReportSaving] = useState(false)
   const [reportSaved, setReportSaved] = useState<string | null>(null)
   const [localReports, setLocalReports] = useState<TaskReport[]>(task.reports ?? [])
+  const [helperToAdd, setHelperToAdd] = useState('')
   const attachmentCount = task.attachments?.length ?? 0
   const commentCount = task.comments?.length ?? 0
   const deliverableCount = task.deliverables?.length ?? 0
@@ -667,6 +808,18 @@ export function TaskDetailSheet({
                     )}
                   </select>
                 </label>
+                <HelperField
+                  task={task}
+                  people={people}
+                  departments={departments}
+                  currentUserId={currentUserId}
+                  canEdit={canEdit}
+                  isPending={isPending}
+                  helperToAdd={helperToAdd}
+                  onHelperToAdd={setHelperToAdd}
+                  onAddHelper={onAddHelper}
+                  onRemoveHelper={onRemoveHelper}
+                />
                 <div className="form-field">
                   <span>Category</span>
                   <CategoryField
@@ -1238,27 +1391,23 @@ export function TaskDetailSheet({
                   {(task.blockedByDependencies ?? []).length === 0 ? (
                     <p className="td-muted">None</p>
                   ) : (
-                    <div className="td-chip-row">
+                    <div className="td-link-cards">
                       {task.blockedByDependencies!.map((dependency) => (
-                        <span key={dependency.id} className="td-dep-chip">
-                          {dependency.blockingTask.title}
-                          {canEdit ? (
-                            <button
-                              type="button"
-                              aria-label={`Remove wait on ${dependency.blockingTask.title}`}
-                              disabled={isPending}
-                              onClick={() =>
-                                setConfirm({
-                                  kind: 'dependency',
-                                  id: dependency.id,
-                                  title: dependency.blockingTask.title,
-                                })
-                              }
-                            >
-                              <X aria-hidden="true" />
-                            </button>
-                          ) : null}
-                        </span>
+                        <LinkedTaskCard
+                          key={dependency.id}
+                          task={dependency.blockingTask}
+                          canRemove={canEdit}
+                          removeLabel={`Remove wait on ${dependency.blockingTask.title}`}
+                          pending={isPending}
+                          onOpen={() => onOpenTask(dependency.blockingTask.id)}
+                          onRemove={() =>
+                            setConfirm({
+                              kind: 'dependency',
+                              id: dependency.id,
+                              title: dependency.blockingTask.title,
+                            })
+                          }
+                        />
                       ))}
                     </div>
                   )}
@@ -1268,27 +1417,23 @@ export function TaskDetailSheet({
                   {(task.blockingDependencies ?? []).length === 0 ? (
                     <p className="td-muted">Doesn’t block others</p>
                   ) : (
-                    <div className="td-chip-row">
+                    <div className="td-link-cards">
                       {task.blockingDependencies!.map((dependency) => (
-                        <span key={dependency.id} className="td-dep-chip">
-                          {dependency.blockedTask.title}
-                          {canEdit ? (
-                            <button
-                              type="button"
-                              aria-label={`Stop blocking ${dependency.blockedTask.title}`}
-                              disabled={isPending}
-                              onClick={() =>
-                                setConfirm({
-                                  kind: 'dependency',
-                                  id: dependency.id,
-                                  title: dependency.blockedTask.title,
-                                })
-                              }
-                            >
-                              <X aria-hidden="true" />
-                            </button>
-                          ) : null}
-                        </span>
+                        <LinkedTaskCard
+                          key={dependency.id}
+                          task={dependency.blockedTask}
+                          canRemove={canEdit}
+                          removeLabel={`Stop blocking ${dependency.blockedTask.title}`}
+                          pending={isPending}
+                          onOpen={() => onOpenTask(dependency.blockedTask.id)}
+                          onRemove={() =>
+                            setConfirm({
+                              kind: 'dependency',
+                              id: dependency.id,
+                              title: dependency.blockedTask.title,
+                            })
+                          }
+                        />
                       ))}
                     </div>
                   )}

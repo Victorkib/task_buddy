@@ -31,6 +31,7 @@ import {
 } from '@/lib/auth/permissions'
 import { buildReport } from '@/lib/reporting/build-report'
 import { projectAccessFromRow, taskAccessFromRow } from '@/lib/db/task-access'
+import { toCollaborator, toLinkedTaskView } from '@/lib/task-collaboration'
 
 
 export async function getCompany() {
@@ -147,6 +148,7 @@ export async function listTasks(options?: { assigneeId?: string; departmentId?: 
     with: {
       assignee: true,
       department: true,
+      helpers: { with: { user: true } },
       project: {
         with: {
           teams: true,
@@ -159,8 +161,28 @@ export async function listTasks(options?: { assigneeId?: string; departmentId?: 
       approvals: { with: { requestor: true, approver: true } },
       deliverables: true,
       milestoneLinks: { with: { milestone: true } },
-      blockingDependencies: { with: { blockedTask: true } },
-      blockedByDependencies: { with: { blockingTask: true } },
+      blockingDependencies: {
+        with: {
+          blockedTask: {
+            with: {
+              assignee: true,
+              helpers: { with: { user: true } },
+              comments: { with: { user: true } },
+            },
+          },
+        },
+      },
+      blockedByDependencies: {
+        with: {
+          blockingTask: {
+            with: {
+              assignee: true,
+              helpers: { with: { user: true } },
+              comments: { with: { user: true } },
+            },
+          },
+        },
+      },
     },
     orderBy: [asc(tasks.dueDate), desc(tasks.createdAt)],
   })
@@ -174,6 +196,15 @@ export async function listTasks(options?: { assigneeId?: string; departmentId?: 
     return {
       ...task,
       ...access,
+      helpers: (task.helpers ?? []).map((entry) => toCollaborator(entry.user)).filter((person) => person !== null),
+      blockingDependencies: task.blockingDependencies.map((dependency) => ({
+        ...dependency,
+        blockedTask: toLinkedTaskView(dependency.blockedTask),
+      })),
+      blockedByDependencies: task.blockedByDependencies.map((dependency) => ({
+        ...dependency,
+        blockingTask: toLinkedTaskView(dependency.blockingTask),
+      })),
       projectId: task.projectId,
       projectTitle: task.project?.title ?? null,
       milestoneId: link?.milestoneId ?? null,
@@ -254,10 +285,11 @@ export async function listResponsibilities(options?: { ownerId?: string; viewer?
   const viewer = options?.viewer ?? null
   if (!viewer) return rows
   if (isManagement(viewer)) return rows
+  const supports = (row: (typeof rows)[number]) => row.assignees?.some((entry) => entry.userId === viewer.id) ?? false
   if (isDepartmentLeader(viewer) && viewer.departmentId) {
-    return rows.filter((row) => row.departmentId === viewer.departmentId || row.ownerId === viewer.id)
+    return rows.filter((row) => row.departmentId === viewer.departmentId || row.ownerId === viewer.id || supports(row))
   }
-  return rows.filter((row) => row.ownerId === viewer.id)
+  return rows.filter((row) => row.ownerId === viewer.id || supports(row))
 }
 
 export async function listActivity(limit = 12, viewer?: CurrentUser | null) {
@@ -325,7 +357,7 @@ export async function getDashboardData(user: CurrentUser) {
       getNotificationPreferences(user.id),
     ])
 
-  const myTasks = allTasks.filter((task) => task.assigneeId === user.id)
+  const myTasks = allTasks.filter((task) => task.assigneeId === user.id || task.helperIds?.includes(user.id))
   const myActive = myTasks.filter(
     (task) => task.status !== 'completed' && task.status !== 'cancelled',
   )
@@ -645,6 +677,7 @@ export async function getNotificationPreferences(userId: string) {
       approvalAlerts: 1,
       managementRequestAlerts: 1,
       dailySummary: 1,
+      weeklyKeepCurrent: 1,
       updatedAt: new Date(),
     }
   )

@@ -10,6 +10,7 @@ import {
   canDeleteTask,
   canEditPerson,
   canEditTask,
+  canJoinTask,
   canInvite,
   canManageOrg,
   canManageProject,
@@ -26,6 +27,7 @@ import {
   isManagement,
 } from '@/lib/auth/permissions'
 import { canSelfCreateTask } from '@/lib/auth/sponsored'
+import { sendKeepCurrentBatch } from '@/lib/mail/keep-current-send'
 import { provisionAuthIdentity, revokeAuthSessions } from '@/lib/auth/provision-user'
 import { getDb } from '@/lib/db'
 import { getCompany, getCurrentUser, getUserById, listTasks } from '@/lib/db/queries'
@@ -53,6 +55,7 @@ import {
   responsibilityAssignees,
   taskAttachments,
   taskComments,
+  taskHelpers,
   taskReports,
   tasks,
   users,
@@ -1203,6 +1206,27 @@ export async function addComment(taskId: string, body: string) {
     summary: `commented on ${task.title}`,
   })
 
+  const access = await taskAccessFor(task)
+  const recipients = new Set<string>()
+  if (task.assigneeId) recipients.add(task.assigneeId)
+  if (task.createdById) recipients.add(task.createdById)
+  for (const helperId of access.helperIds ?? []) recipients.add(helperId)
+  recipients.delete(currentUser.id)
+  if (recipients.size > 0) {
+    const preview = trimmed.length > 180 ? `${trimmed.slice(0, 177)}…` : trimmed
+    await getDb().insert(notifications).values(
+      [...recipients].map((userId) => ({
+        companyId: task.companyId,
+        userId,
+        type: 'system' as const,
+        title: `Note on ${task.title}`,
+        body: `${currentUser.firstName} ${currentUser.lastName}: ${preview}`,
+        entityType: 'task',
+        entityId: taskId,
+      })),
+    )
+  }
+
   refreshWorkhub()
   return {
     ok: true as const,
@@ -1217,6 +1241,90 @@ export async function addComment(taskId: string, body: string) {
       },
     },
   }
+}
+
+function collaboratorFromUser(person: {
+  id: string
+  initials: string
+  firstName: string
+  lastName: string
+  avatarUrl?: string | null
+  avatarColor?: string | null
+}) {
+  return {
+    id: person.id,
+    initials: person.initials,
+    firstName: person.firstName,
+    lastName: person.lastName,
+    avatarUrl: person.avatarUrl,
+    avatarColor: person.avatarColor,
+  }
+}
+
+export async function addTaskHelper(taskId: string, userId: string) {
+  const currentUser = await getCurrentUser()
+  if (!currentUser) return { error: 'Not signed in.' }
+
+  const [task] = await getDb().select().from(tasks).where(eq(tasks.id, taskId)).limit(1)
+  if (!task) return { error: 'Task not found.' }
+  const access = await taskAccessFor(task)
+  const joiningSelf = userId === currentUser.id
+  if (!canEditTask(currentUser, access) && !(joiningSelf && canJoinTask(currentUser, access))) {
+    return denied('You are not allowed to add someone to this task.')
+  }
+  if (userId === task.assigneeId) return { error: 'The lead is already on this task.' }
+
+  const person = userId === currentUser.id ? currentUser : await getUserById(userId)
+  if (!person || person.companyId !== currentUser.companyId) return { error: 'Choose someone in this company.' }
+
+  await getDb().insert(taskHelpers).values({ taskId, userId }).onConflictDoNothing()
+  await getDb().insert(activityEvents).values({
+    companyId: task.companyId,
+    actorId: currentUser.id,
+    entityType: 'task',
+    entityId: taskId,
+    action: 'task_helper_added',
+    summary: joiningSelf ? `joined ${task.title}` : `added ${person.firstName} ${person.lastName} to ${task.title}`,
+  })
+  if (!joiningSelf) {
+    await getDb().insert(notifications).values({
+      companyId: task.companyId,
+      userId,
+      type: 'system',
+      title: `You joined ${task.title}`,
+      body: `${currentUser.firstName} ${currentUser.lastName} added you to “${task.title}”. The lead stays the same.`,
+      entityType: 'task',
+      entityId: taskId,
+    })
+  }
+
+  refreshWorkhub()
+  return { ok: true as const, helper: collaboratorFromUser(person) }
+}
+
+export async function removeTaskHelper(taskId: string, userId: string) {
+  const currentUser = await getCurrentUser()
+  if (!currentUser) return { error: 'Not signed in.' }
+
+  const [task] = await getDb().select().from(tasks).where(eq(tasks.id, taskId)).limit(1)
+  if (!task) return { error: 'Task not found.' }
+  const access = await taskAccessFor(task)
+  const removingSelf = userId === currentUser.id
+  if (!canEditTask(currentUser, access) && !(removingSelf && access.helperIds?.includes(currentUser.id))) {
+    return denied('You are not allowed to remove someone from this task.')
+  }
+
+  await getDb().delete(taskHelpers).where(and(eq(taskHelpers.taskId, taskId), eq(taskHelpers.userId, userId)))
+  await getDb().insert(activityEvents).values({
+    companyId: task.companyId,
+    actorId: currentUser.id,
+    entityType: 'task',
+    entityId: taskId,
+    action: 'task_helper_removed',
+    summary: removingSelf ? `left ${task.title}` : `removed a helper from ${task.title}`,
+  })
+  refreshWorkhub()
+  return { ok: true as const }
 }
 
 export async function deleteComment(commentId: string) {
@@ -1309,6 +1417,7 @@ export async function updateTaskDetails(input: {
   }
 
   if (changedAssignment) {
+    await getDb().delete(taskHelpers).where(and(eq(taskHelpers.taskId, input.taskId), eq(taskHelpers.userId, input.assigneeId)))
     await getDb().insert(activityEvents).values({
       companyId: task.companyId,
       actorId: currentUser.id,
@@ -2496,6 +2605,7 @@ export async function updateNotificationPreferences(formData: FormData) {
     approvalAlerts: formData.get('approvalAlerts') === 'on' ? 1 : 0,
     managementRequestAlerts: formData.get('managementRequestAlerts') === 'on' ? 1 : 0,
     dailySummary: formData.get('dailySummary') === 'on' ? 1 : 0,
+    weeklyKeepCurrent: formData.get('weeklyKeepCurrent') === 'on' ? 1 : 0,
     updatedAt: new Date(),
   }
 
@@ -2509,6 +2619,53 @@ export async function updateNotificationPreferences(formData: FormData) {
 
   refreshWorkhub()
   return { ok: true }
+}
+
+export async function sendKeepCurrentReminders(input?: { resend?: boolean }) {
+  const currentUser = await getCurrentUser()
+  if (!currentUser) {
+    return {
+      ok: false,
+      sent: 0,
+      skipped: 0,
+      alreadySent: 0,
+      failed: 0,
+      weekLabel: '',
+      resendAvailable: false,
+      detail: 'Not signed in.',
+      error: 'Not signed in.',
+    }
+  }
+  if (!canManageOrg(currentUser)) {
+    return {
+      ok: false,
+      sent: 0,
+      skipped: 0,
+      alreadySent: 0,
+      failed: 0,
+      weekLabel: '',
+      resendAvailable: false,
+      detail: 'Only an admin can send the weekly Task Buddy check-in.',
+      error: 'Only an admin can send the weekly Task Buddy check-in.',
+    }
+  }
+
+  try {
+    return await sendKeepCurrentBatch({ resend: Boolean(input?.resend) })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'The check-in could not be sent.'
+    return {
+      ok: false,
+      sent: 0,
+      skipped: 0,
+      alreadySent: 0,
+      failed: 0,
+      weekLabel: '',
+      resendAvailable: false,
+      detail: message,
+      error: message,
+    }
+  }
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
