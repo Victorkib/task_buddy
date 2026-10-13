@@ -35,10 +35,10 @@ import {
 import type { AdminRequestKind, OfficeDesk, OfficeLetterType, OfficeRequest } from '@/lib/admin-office/types'
 
 const ADMIN_GROUPS = [
-  { label: 'Today', items: [['today', 'Today'], ['inbox', 'Decide']] },
-  { label: 'People', items: [['people', 'People'], ['calendar', 'Who is out'], ['offers', 'Offers']] },
+  { label: 'Start here', items: [['today', 'Today'], ['inbox', 'Decide']] },
+  { label: 'Staff', items: [['people', 'People'], ['calendar', 'Who is out'], ['offers', 'Offers']] },
   { label: 'Money', items: [['finance', 'Expenses'], ['invoices', 'Invoices']] },
-  { label: 'House', items: [['documents', 'Papers'], ['assets', 'Equipment'], ['compliance', 'Reminders']] },
+  { label: 'Records', items: [['documents', 'Papers'], ['assets', 'Equipment'], ['compliance', 'Reminders']] },
 ] as const
 
 const SELF_GROUPS = [
