@@ -30,11 +30,11 @@ export async function provisionAuthIdentity(input: {
       .where(eq(authUser.id, input.userId))
   }
 
-  const [existingAccount] = await db
-    .select({ id: authAccount.id })
+  const accounts = await db
+    .select({ id: authAccount.id, providerId: authAccount.providerId })
     .from(authAccount)
     .where(eq(authAccount.userId, input.userId))
-    .limit(1)
+  const existingAccount = accounts.find((account) => account.providerId === 'credential') ?? accounts[0]
 
   if (existingAccount) {
     await db

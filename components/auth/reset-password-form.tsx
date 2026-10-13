@@ -4,6 +4,7 @@ import { useActionState, useState } from 'react'
 import { Eye, EyeOff, Loader2, Lock } from 'lucide-react'
 import Link from 'next/link'
 import { resetPasswordWithToken } from '@/app/invite-actions'
+import { PRODUCT_NAME } from '@/lib/branding'
 
 type State = { error?: string; ok?: true; email?: string }
 const initialState: State = {}
@@ -13,8 +14,11 @@ export function ResetPasswordForm({ token, email }: { token: string; email: stri
   const [state, formAction, pending] = useActionState(
     async (_prev: State, formData: FormData): Promise<State> => {
       const result = await resetPasswordWithToken(formData)
-      if (result && 'error' in result && result.error) return { error: result.error }
-      if (result && 'ok' in result) return result
+      if (result && 'error' in result && typeof result.error === 'string') return { error: result.error }
+      if (result && 'redirectTo' in result && typeof result.redirectTo === 'string' && result.redirectTo.startsWith('/')) {
+        window.location.assign(result.redirectTo)
+        return { ok: true }
+      }
       return {}
     },
     initialState,
@@ -24,7 +28,7 @@ export function ResetPasswordForm({ token, email }: { token: string; email: stri
     return (
       <div className="space-y-4">
         <div role="status" className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
-          Password updated for {state.email ?? email}. You can sign in now.
+          Password updated for {email}. Opening {PRODUCT_NAME}…
         </div>
         <Link href="/login" className="inline-flex h-11 w-full items-center justify-center rounded-lg bg-blue-600 text-base font-medium text-white hover:bg-blue-500">
           Sign in
@@ -37,7 +41,7 @@ export function ResetPasswordForm({ token, email }: { token: string; email: stri
     <form action={formAction} className="space-y-5" aria-busy={pending}>
       <input type="hidden" name="token" value={token} />
       <p className="rounded-lg border border-slate-700 bg-slate-950/50 px-3 py-2 text-sm text-slate-300">
-        Resetting password for <strong className="text-white">{email}</strong>
+        Choose a new password for <strong className="text-white">{email}</strong>. The password you use today will not be accepted. When this saves, Task Buddy signs you in.
       </p>
 
       <div className="space-y-2">

@@ -29,7 +29,9 @@ export default function ForgotPasswordPage() {
           <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 shadow-2xl shadow-black/20 backdrop-blur-sm sm:p-8">
             <div className="mb-8">
               <h2 className="text-2xl font-semibold tracking-tight text-white">Forgot password</h2>
-              <p className="mt-2 text-sm text-slate-400">Enter your work email and we will send a reset link if an account exists.</p>
+              <p className="mt-2 text-sm text-slate-400">
+                Enter your work email and we will send a reset link if an account exists. The link stays valid for 24 hours, and saving a new password signs you in.
+              </p>
             </div>
             <ForgotPasswordForm />
             <p className="mt-6 text-center text-xs text-slate-500">

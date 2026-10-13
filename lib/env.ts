@@ -1,4 +1,5 @@
 import { mailProductLabel } from '@/lib/branding'
+import { isLocalAppUrl } from '@/lib/http/public-url'
 
 function readEnv(name: string) {
   const value = process.env[name]
@@ -25,12 +26,15 @@ export function getAuthSecret() {
 }
 
 export function getAppUrl() {
-  return (
-    readEnv('BETTER_AUTH_URL') ??
-    readEnv('AUTH_URL') ??
-    readEnv('NEXT_PUBLIC_APP_URL') ??
-    readEnv('URL')
-  )
+  const values = [
+    readEnv('BETTER_AUTH_URL'),
+    readEnv('AUTH_URL'),
+    readEnv('NEXT_PUBLIC_APP_URL'),
+    readEnv('URL'),
+    readEnv('DEPLOY_PRIME_URL'),
+    readEnv('DEPLOY_URL'),
+  ].filter((value): value is string => Boolean(value))
+  return values.find((value) => !isLocalAppUrl(value)) ?? values[0]
 }
 
 export function getMetadataBase() {

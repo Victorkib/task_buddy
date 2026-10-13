@@ -14,8 +14,7 @@ export function ForcedPasswordForm({ email }: { email: string }) {
   const [state, formAction, pending] = useActionState(
     async (_prev: State, formData: FormData): Promise<State> => {
       const result = await completeForcedPasswordChange(formData)
-      if (result && 'error' in result && result.error) return { error: result.error }
-      if (result && 'ok' in result) return result
+      if (result && 'error' in result && typeof result.error === 'string') return { error: result.error }
       return {}
     },
     initialState,

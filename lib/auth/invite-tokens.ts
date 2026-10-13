@@ -4,7 +4,7 @@ import { getDb } from '@/lib/db'
 import { userInvites, userInvitePurposeEnum } from '@/lib/db/schema'
 
 export const INVITE_SETUP_DAYS = 7
-export const PASSWORD_RESET_HOURS = 2
+export const PASSWORD_RESET_HOURS = 24
 
 type InvitePurpose = (typeof userInvitePurposeEnum.enumValues)[number]
 

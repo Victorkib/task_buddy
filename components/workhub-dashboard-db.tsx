@@ -117,6 +117,7 @@ import { PresentMode } from '@/components/present-mode'
 import { CreateSelfTaskDialog } from '@/components/create-self-task-dialog'
 import { CreateDepartmentDialog } from '@/components/create-department-dialog'
 import { RemovePersonDialog } from '@/components/remove-person-dialog'
+import { ResetPersonPasswordDialog } from '@/components/reset-person-password-dialog'
 import { EditPersonDialog } from '@/components/edit-person-dialog'
 import type { Person } from '@/lib/types'
 import { taskCategoryEnum, taskPriorityEnum, taskStatusEnum } from '@/lib/db/schema'
@@ -633,6 +634,7 @@ export default function WorkhubDashboardDB({
   const [dependencyBlockingTaskId, setDependencyBlockingTaskId] = useState('')
   const [deleteTaskConfirm, setDeleteTaskConfirm] = useState<{ id: string; title: string } | null>(null)
   const [removePersonTarget, setRemovePersonTarget] = useState<Employee | null>(null)
+  const [resetPersonTarget, setResetPersonTarget] = useState<(Employee & { email: string }) | null>(null)
   const [editPersonTarget, setEditPersonTarget] = useState<Employee | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [approvalReason, setApprovalReason] = useState('')
@@ -1797,6 +1799,12 @@ export default function WorkhubDashboardDB({
     })
   }
 
+  function openPasswordReset(personId: string) {
+    const target = people.find((entry) => entry.id === personId) ?? null
+    if (!target?.email) return
+    setResetPersonTarget({ ...target, email: target.email })
+  }
+
   function handleMarkNotificationRead(notification: DbNotification) {
     startTransition(async () => {
       await markNotificationRead(notification.id)
@@ -2945,6 +2953,16 @@ export default function WorkhubDashboardDB({
                                 </button>
                               </>
                             ) : null}
+                            {canManagePeople && employee.status === 'active' ? (
+                              <button
+                                type="button"
+                                className="row-action"
+                                disabled={isPending}
+                                onClick={() => openPasswordReset(employee.id)}
+                              >
+                                Reset password
+                              </button>
+                            ) : null}
                             {canManagePeople && employee.status !== 'invited' ? (
                               <button
                                 type="button"
@@ -3015,6 +3033,7 @@ export default function WorkhubDashboardDB({
                           }
                         : undefined
                     }
+                    onResetPassword={canManagePeople ? openPasswordReset : undefined}
                     onToggleStatus={canManagePeople ? handleToggleUserStatus : undefined}
                     onResendInvite={canInvitePeople ? handleResendInvite : undefined}
                     onCancelInvite={canInvitePeople ? handleCancelInvite : undefined}
@@ -3485,6 +3504,7 @@ export default function WorkhubDashboardDB({
                 }
               : undefined
           }
+          onResetPassword={canManagePeople ? openPasswordReset : undefined}
           onToggleStatus={canManagePeople ? handleToggleUserStatus : undefined}
           onResendInvite={canInvitePeople ? handleResendInvite : undefined}
           onCancelInvite={canInvitePeople ? handleCancelInvite : undefined}
@@ -3707,6 +3727,9 @@ export default function WorkhubDashboardDB({
             router.refresh()
           }}
         />
+      )}
+      {canManagePeople && resetPersonTarget && (
+        <ResetPersonPasswordDialog person={resetPersonTarget} onClose={() => setResetPersonTarget(null)} />
       )}
       {canManagePeople && removePersonTarget && (
         <RemovePersonDialog

@@ -28,7 +28,8 @@ import {
 } from '@/lib/auth/permissions'
 import { canSelfCreateTask } from '@/lib/auth/sponsored'
 import { sendKeepCurrentBatch } from '@/lib/mail/keep-current-send'
-import { provisionAuthIdentity, revokeAuthSessions } from '@/lib/auth/provision-user'
+import { revokeAuthSessions } from '@/lib/auth/provision-user'
+import { replaceCredentialPassword } from '@/lib/auth/replace-password'
 import { getDb } from '@/lib/db'
 import { getCompany, getCurrentUser, getUserById, listTasks } from '@/lib/db/queries'
 import {
@@ -2753,17 +2754,17 @@ export async function changeOwnPassword(input: {
   const same = await bcrypt.compare(nextPassword, currentUser.passwordHash)
   if (same) return { error: 'Choose a password that is different from the current one.' }
 
-  const passwordHash = await bcrypt.hash(nextPassword, 10)
-  await getDb()
-    .update(users)
-    .set({ passwordHash, mustChangePassword: false })
-    .where(eq(users.id, currentUser.id))
-  await provisionAuthIdentity({
-    userId: currentUser.id,
-    email: currentUser.email,
-    name: fullName(currentUser),
-    passwordHash,
-  })
+  try {
+    await replaceCredentialPassword({
+      userId: currentUser.id,
+      email: currentUser.email,
+      name: fullName(currentUser),
+      password: nextPassword,
+      mustChangePassword: false,
+    })
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'The new password could not be stored.' }
+  }
 
   refreshWorkhub()
   return { ok: true as const }

@@ -66,6 +66,7 @@ type DepartmentDetailProps = {
   onInvite?: () => void
   onEditPerson?: (personId: string) => void
   onRemovePerson?: (personId: string) => void
+  onResetPassword?: (personId: string) => void
   onToggleStatus?: (personId: string) => void
   onResendInvite?: (personId: string) => void
   onCancelInvite?: (personId: string) => void
@@ -128,6 +129,7 @@ export function DepartmentDetailBody({
   onInvite,
   onEditPerson,
   onRemovePerson,
+  onResetPassword,
   onToggleStatus,
   onResendInvite,
   onCancelInvite,
@@ -224,7 +226,7 @@ export function DepartmentDetailBody({
                       </button>
                     ) : null}
                   </div>
-                ) : person.status !== 'invited' && (onEditPerson || onRemovePerson || onToggleStatus || onAssignTask) ? (
+                ) : person.status !== 'invited' && (onEditPerson || onRemovePerson || onResetPassword || onToggleStatus || onAssignTask) ? (
                   <div className="dept-person-actions">
                     {onAssignTask ? (
                       <button
@@ -239,6 +241,11 @@ export function DepartmentDetailBody({
                     {onEditPerson ? (
                       <button type="button" className="row-action" disabled={busy} onClick={() => onEditPerson(person.id)}>
                         Edit
+                      </button>
+                    ) : null}
+                    {onResetPassword && person.status === 'active' ? (
+                      <button type="button" className="row-action" disabled={busy} onClick={() => onResetPassword(person.id)}>
+                        Reset password
                       </button>
                     ) : null}
                     {onRemovePerson ? (

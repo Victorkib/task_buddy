@@ -12,6 +12,8 @@ import {
   PASSWORD_RESET_HOURS,
 } from '@/lib/auth/invite-tokens'
 import { deleteAuthIdentity, provisionAuthIdentity, revokeAuthSessions } from '@/lib/auth/provision-user'
+import { replaceCredentialPassword } from '@/lib/auth/replace-password'
+import { choosePublicAppUrl, originFromForwarded } from '@/lib/http/public-url'
 import { getDb } from '@/lib/db'
 import { getCompany, getCurrentUser, getUserByEmail, getUserById } from '@/lib/db/queries'
 import {
@@ -45,6 +47,15 @@ function roleLandingPath(roleKeys: string[]) {
   if (roleKeys.includes('admin') || roleKeys.includes('managing_director')) return '/?view=Home'
   if (roleKeys.includes('department_head') || roleKeys.includes('manager')) return '/?view=Departments'
   return '/?view=My%20tasks'
+}
+
+async function appUrlForEmail() {
+  const headerList = await headers()
+  const requestOrigin = originFromForwarded(
+    headerList.get('x-forwarded-host') ?? headerList.get('host'),
+    headerList.get('x-forwarded-proto'),
+  )
+  return choosePublicAppUrl({ requestOrigin, configured: getPublicAppUrl() })
 }
 
 function refreshWorkhub() {
@@ -97,7 +108,7 @@ async function sendSetupInviteEmail(input: {
     rawToken = created.rawToken
   }
 
-  const setupUrl = `${getPublicAppUrl()}/invite/${rawToken}`
+  const setupUrl = `${await appUrlForEmail()}/invite/${rawToken}`
   const mail = inviteSetupEmail({
     firstName: input.firstName,
     inviterName: input.inviterName,
@@ -285,7 +296,7 @@ export async function inviteEmployee(formData: FormData) {
         firstName,
         inviterName,
         companyName: company.name,
-        loginUrl: `${getPublicAppUrl()}/login`,
+        loginUrl: `${await appUrlForEmail()}/login`,
         temporaryPassword,
       })
       await sendMail({ to: email, ...mail })
@@ -497,17 +508,18 @@ export async function completeForcedPasswordChange(formData: FormData) {
   const same = await bcrypt.compare(nextPassword, currentUser.passwordHash)
   if (same) return { error: 'Choose a password that is different from the temporary one.' }
 
-  const passwordHash = await bcrypt.hash(nextPassword, 10)
-  await getDb()
-    .update(users)
-    .set({ passwordHash, mustChangePassword: false })
-    .where(eq(users.id, currentUser.id))
-  await provisionAuthIdentity({
-    userId: currentUser.id,
-    email: currentUser.email,
-    name: fullName(currentUser),
-    passwordHash,
-  })
+  let replaced: Awaited<ReturnType<typeof replaceCredentialPassword>>
+  try {
+    replaced = await replaceCredentialPassword({
+      userId: currentUser.id,
+      email: currentUser.email,
+      name: fullName(currentUser),
+      password: nextPassword,
+      mustChangePassword: false,
+    })
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'The new password could not be stored.' }
+  }
   await revokeAuthSessions(currentUser.id)
 
   const requestHeaders = await headers()
@@ -517,9 +529,10 @@ export async function completeForcedPasswordChange(formData: FormData) {
       headers: requestHeaders,
     })
   } catch (error) {
+    await replaced.restore()
+    await revokeAuthSessions(currentUser.id)
     if (error instanceof APIError) {
-      refreshWorkhub()
-      return { ok: true as const, signedIn: false as const }
+      return { error: 'The new password was not accepted. Your previous password is unchanged.' }
     }
     throw error
   }
@@ -543,29 +556,35 @@ export async function requestPasswordReset(formData: FormData) {
   }
   if (!user || user.status !== 'active' || !user.passwordHash) return generic
 
-  const expiresAt = new Date()
-  expiresAt.setHours(expiresAt.getHours() + PASSWORD_RESET_HOURS)
-  const { rawToken } = await createUserInvite({
-    userId: user.id,
-    invitedById: null,
-    purpose: 'password_reset',
-    expiresAt,
-  })
-
-  const resetUrl = `${getPublicAppUrl()}/reset-password/${rawToken}`
-  const mail = passwordResetEmail({
-    firstName: user.firstName,
-    resetUrl,
-    expiresInHours: PASSWORD_RESET_HOURS,
-  })
-
   try {
-    await sendMail({ to: user.email, ...mail })
+    await issuePasswordResetEmail(user, null)
   } catch {
     return { error: 'The reset email could not be sent. Try again shortly or contact your administrator.' }
   }
 
   return generic
+}
+
+async function issuePasswordResetEmail(
+  user: { id: string; email: string; firstName: string },
+  invitedById: string | null,
+) {
+  const expiresAt = new Date()
+  expiresAt.setHours(expiresAt.getHours() + PASSWORD_RESET_HOURS)
+  const { rawToken } = await createUserInvite({
+    userId: user.id,
+    invitedById,
+    purpose: 'password_reset',
+    expiresAt,
+  })
+  const resetUrl = `${await appUrlForEmail()}/reset-password/${rawToken}`
+  const mail = passwordResetEmail({
+    firstName: user.firstName,
+    resetUrl,
+    expiresInHours: PASSWORD_RESET_HOURS,
+  })
+  await sendMail({ to: user.email, ...mail })
+  return { resetUrl }
 }
 
 export async function getPasswordResetPreview(rawToken: string) {
@@ -589,22 +608,155 @@ export async function resetPasswordWithToken(formData: FormData) {
     return { error: 'This reset link is invalid or has expired.' }
   }
 
-  const passwordHash = await bcrypt.hash(password, 10)
-  await getDb()
-    .update(users)
-    .set({ passwordHash, mustChangePassword: false })
-    .where(eq(users.id, invite.userId))
-  await provisionAuthIdentity({
-    userId: invite.userId,
-    email: invite.user.email,
-    name: fullName(invite.user),
-    passwordHash,
-  })
-  await markInviteConsumed(invite.id)
+  if (invite.user.passwordHash && (await bcrypt.compare(password, invite.user.passwordHash))) {
+    return { error: 'That matches the current password. Choose a different one.' }
+  }
+
+  let replaced: Awaited<ReturnType<typeof replaceCredentialPassword>>
+  try {
+    replaced = await replaceCredentialPassword({
+      userId: invite.userId,
+      email: invite.user.email,
+      name: fullName(invite.user),
+      password,
+      mustChangePassword: false,
+    })
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'The new password could not be stored.' }
+  }
+
   await revokeAuthSessions(invite.userId)
+  const requestHeaders = await headers()
+  try {
+    await auth.api.signInEmail({
+      body: { email: invite.user.email, password },
+      headers: requestHeaders,
+    })
+  } catch (error) {
+    await replaced.restore()
+    await revokeAuthSessions(invite.userId)
+    if (error instanceof APIError) {
+      return { error: 'The new password was not accepted. Your previous password is unchanged. Request a fresh link and try again.' }
+    }
+    throw error
+  }
+
+  await markInviteConsumed(invite.id)
+  const company = await getCompany()
+  if (company) {
+    await getDb().insert(activityEvents).values({
+      companyId: company.id,
+      actorId: invite.userId,
+      entityType: 'user',
+      entityId: invite.userId,
+      action: 'password_reset',
+      summary: `${fullName(invite.user)} reset their password`,
+    })
+  }
 
   refreshWorkhub()
-  return { ok: true as const, email: invite.user.email }
+  const roleKeys = invite.user.roles?.map((entry) => entry.role.key) ?? []
+  return { ok: true as const, redirectTo: roleLandingPath(roleKeys) }
+}
+
+export async function sendPersonPasswordReset(userId: string) {
+  const currentUser = await getCurrentUser()
+  if (!currentUser) return { error: 'Not signed in.' }
+  if (!canManageUsers(currentUser)) return denied('You are not allowed to reset passwords.')
+  if (!isMailConfigured()) return { error: 'Password reset email is not available yet.' }
+
+  const target = await getUserById(userId)
+  if (!target) return { error: 'Person not found.' }
+  if (target.status !== 'active' || !target.passwordHash) {
+    return { error: 'Only an active account with a password can receive a reset link.' }
+  }
+
+  try {
+    const { resetUrl } = await issuePasswordResetEmail(target, currentUser.id)
+    const company = await getCompany()
+    if (company) {
+      await getDb().insert(activityEvents).values({
+        companyId: company.id,
+        actorId: currentUser.id,
+        entityType: 'user',
+        entityId: target.id,
+        action: 'password_reset_sent',
+        summary: `sent a password reset link to ${fullName(target)}`,
+      })
+    }
+    refreshWorkhub()
+    return {
+      ok: true as const,
+      resetUrl,
+      message: `Reset link emailed to ${target.email}. It expires in ${PASSWORD_RESET_HOURS} hours.`,
+    }
+  } catch {
+    return { error: 'The reset email could not be sent. Nothing was changed.' }
+  }
+}
+
+export async function setPersonTemporaryPassword(userId: string) {
+  const currentUser = await getCurrentUser()
+  if (!currentUser) return { error: 'Not signed in.' }
+  if (!canManageUsers(currentUser)) return denied('You are not allowed to reset passwords.')
+
+  const target = await getUserById(userId)
+  if (!target) return { error: 'Person not found.' }
+  if (target.status !== 'active') return { error: 'Activate the account before setting a password.' }
+
+  const temporaryPassword = generateTemporaryPassword()
+  try {
+    await replaceCredentialPassword({
+      userId: target.id,
+      email: target.email,
+      name: fullName(target),
+      password: temporaryPassword,
+      mustChangePassword: true,
+    })
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'The temporary password could not be stored.' }
+  }
+  await revokeAuthSessions(target.id)
+
+  let emailed = false
+  if (isMailConfigured()) {
+    try {
+      const company = await getCompany()
+      const mail = tempPasswordEmail({
+        firstName: target.firstName,
+        inviterName: fullName(currentUser),
+        companyName: company?.name ?? PRODUCT_NAME,
+        loginUrl: `${await appUrlForEmail()}/login`,
+        temporaryPassword,
+      })
+      await sendMail({ to: target.email, ...mail })
+      emailed = true
+    } catch {
+      emailed = false
+    }
+  }
+
+  const company = await getCompany()
+  if (company) {
+    await getDb().insert(activityEvents).values({
+      companyId: company.id,
+      actorId: currentUser.id,
+      entityType: 'user',
+      entityId: target.id,
+      action: 'temporary_password_set',
+      summary: `set a temporary password for ${fullName(target)}`,
+    })
+  }
+
+  refreshWorkhub()
+  return {
+    ok: true as const,
+    temporaryPassword,
+    emailed,
+    message: emailed
+      ? `Temporary password emailed to ${target.email}. They must choose a new one at the next sign-in.`
+      : `Temporary password saved for ${target.email}. Copy it now — they must choose a new one at the next sign-in.`,
+  }
 }
 
 export async function getPersonRemovalPreview(userId: string) {
