@@ -1,4 +1,4 @@
-import { asc, eq, sql } from 'drizzle-orm'
+import { asc, desc, eq, sql } from 'drizzle-orm'
 import { canRunAdminOffice } from '@/lib/auth/permissions'
 import {
   addDaysIso,
@@ -21,7 +21,9 @@ import type {
   OfficePerson,
   OfficeRequest,
 } from '@/lib/admin-office/types'
+import { parsePaymentSnapshot } from '@/lib/admin-office/invoices'
 import { getDb } from '@/lib/db'
+import { isMailConfigured } from '@/lib/mail/send'
 import {
   adminRequests,
   departments,
@@ -30,6 +32,11 @@ import {
   officeAssets,
   officeCompliance,
   officeDocuments,
+  officeClients,
+  officeExpenses,
+  officeInvoiceSettings,
+  officeInvoices,
+  officePaymentAccounts,
   officeSequences,
   officeVendors,
   staffProfiles,
@@ -64,6 +71,12 @@ function unavailableDesk(user: OfficeViewer, message: string): OfficeDesk {
     requests: [],
     offers: [],
     documents: [],
+    expenses: [],
+    invoiceSettings: { vatEnabled: true, vatRateBps: 1600, companyPin: null },
+    paymentAccounts: [],
+    clients: [],
+    invoices: [],
+    mailReady: false,
     vendors: [],
     assets: [],
     compliance: [],
@@ -159,7 +172,7 @@ async function ensureOfficeRecords(companyId: string, year: number) {
   }
 }
 
-export async function nextOfficeNumber(prefix: 'HR' | 'OFR' | 'DOC') {
+export async function nextOfficeNumber(prefix: 'HR' | 'OFR' | 'DOC' | 'INV') {
   const year = Number(nairobiToday().slice(0, 4))
   const key = `GCS-${prefix}-${year}`
   const [row] = await getDb()
@@ -267,8 +280,14 @@ async function loadOfficeDesk(user: OfficeViewer): Promise<OfficeDesk> {
   const runsOffice = canRunAdminOffice(user)
   await ensureOfficeRecords(user.companyId, year)
   const db = getDb()
+  if (runsOffice) {
+    await db
+      .insert(officeInvoiceSettings)
+      .values({ companyId: user.companyId, vatEnabled: true, vatRateBps: 1600 })
+      .onConflictDoNothing()
+  }
 
-  const [peopleRows, requestRows, offerRows, documentRows, ackRows, vendorRows, assetRows, complianceRows, departmentRows] =
+  const [peopleRows, requestRows, offerRows, documentRows, ackRows, expenseRows, vendorRows, assetRows, complianceRows, departmentRows, invoiceSettings, paymentRows, clientRows, invoiceRows] =
     await Promise.all([
       db.query.users.findMany({
         where: eq(users.companyId, user.companyId),
@@ -297,6 +316,12 @@ async function loadOfficeDesk(user: OfficeViewer): Promise<OfficeDesk> {
       }),
       db.select().from(documentAcknowledgements),
       runsOffice
+        ? db.query.officeExpenses.findMany({
+            where: eq(officeExpenses.companyId, user.companyId),
+            orderBy: [asc(officeExpenses.spentOn), asc(officeExpenses.createdAt)],
+          })
+        : Promise.resolve([]),
+      runsOffice
         ? db.query.officeVendors.findMany({
             where: eq(officeVendors.companyId, user.companyId),
             with: { owner: true },
@@ -318,6 +343,28 @@ async function loadOfficeDesk(user: OfficeViewer): Promise<OfficeDesk> {
           })
         : Promise.resolve([]),
       db.select({ id: departments.id, name: departments.name }).from(departments).where(eq(departments.companyId, user.companyId)),
+      runsOffice
+        ? db.query.officeInvoiceSettings.findFirst({ where: eq(officeInvoiceSettings.companyId, user.companyId) })
+        : Promise.resolve(null),
+      runsOffice
+        ? db.query.officePaymentAccounts.findMany({
+            where: eq(officePaymentAccounts.companyId, user.companyId),
+            orderBy: [asc(officePaymentAccounts.sortOrder), asc(officePaymentAccounts.createdAt)],
+          })
+        : Promise.resolve([]),
+      runsOffice
+        ? db.query.officeClients.findMany({
+            where: eq(officeClients.companyId, user.companyId),
+            orderBy: [asc(officeClients.name)],
+          })
+        : Promise.resolve([]),
+      runsOffice
+        ? db.query.officeInvoices.findMany({
+            where: eq(officeInvoices.companyId, user.companyId),
+            with: { lines: true },
+            orderBy: [desc(officeInvoices.createdAt)],
+          })
+        : Promise.resolve([]),
     ])
 
   const people = peopleRows.map((row) => toPerson(row, year, runsOffice))
@@ -555,6 +602,25 @@ async function loadOfficeDesk(user: OfficeViewer): Promise<OfficeDesk> {
   const imprestOutstandingKes = requestRows
     .filter((row) => row.kind === 'imprest' && row.status === 'approved')
     .reduce((sum, row) => sum + row.amountKes, 0)
+  if (runsOffice && imprestOutstandingKes > 0) {
+    alerts.push({
+      id: 'imprest',
+      tone: 'attention' as const,
+      title: 'Imprest is still out',
+      detail: 'Issued cash that has not been marked retired. Open Decide to close it.',
+      desk: 'inbox',
+    })
+  }
+  const overdueInvoices = invoiceRows.filter((row) => row.status === 'sent' && row.dueDate && row.dueDate < today)
+  if (runsOffice && overdueInvoices.length > 0) {
+    alerts.push({
+      id: 'invoices',
+      tone: 'attention' as const,
+      title: `${overdueInvoices.length} invoice${overdueInvoices.length === 1 ? '' : 's'} past the due date`,
+      detail: overdueInvoices.map((row) => row.documentNumber ?? row.clientName).join(', '),
+      desk: 'invoices',
+    })
+  }
 
   const leaveLiabilityHundredths = activeStaff.reduce((sum, person) => sum + Math.max(0, person.annualAvailableHundredths), 0)
 
@@ -584,6 +650,66 @@ async function loadOfficeDesk(user: OfficeViewer): Promise<OfficeDesk> {
       createdAt: row.createdAt.toISOString(),
     })),
     documents,
+    expenses: expenseRows.map((row) => ({
+      id: row.id,
+      spentOn: row.spentOn,
+      voucherNo: row.voucherNo,
+      description: row.description,
+      paidTo: row.paidTo,
+      category: row.category,
+      amountCents: row.amountCents,
+      paymentMethod: row.paymentMethod,
+      receiptNo: row.receiptNo,
+      approvedBy: row.approvedBy,
+      remarks: row.remarks,
+    })),
+    invoiceSettings: {
+      vatEnabled: invoiceSettings?.vatEnabled ?? true,
+      vatRateBps: invoiceSettings?.vatRateBps ?? 1600,
+      companyPin: invoiceSettings?.companyPin ?? null,
+    },
+    paymentAccounts: paymentRows.map((row) => ({
+      id: row.id,
+      label: row.label,
+      kind: row.kind === 'bank' || row.kind === 'paybill' || row.kind === 'other' ? row.kind : 'other',
+      details: row.details,
+      active: row.active,
+    })),
+    clients: clientRows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      email: row.email,
+      phone: row.phone,
+      address: row.address,
+      pin: row.pin,
+    })),
+    invoices: invoiceRows.map((row) => ({
+      id: row.id,
+      documentNumber: row.documentNumber,
+      status: row.status === 'sent' || row.status === 'paid' || row.status === 'void' ? row.status : 'draft',
+      issueDate: row.issueDate,
+      dueDate: row.dueDate,
+      clientId: row.clientId,
+      clientName: row.clientName,
+      clientEmail: row.clientEmail,
+      clientPhone: row.clientPhone,
+      clientAddress: row.clientAddress,
+      clientPin: row.clientPin,
+      vatEnabled: row.vatEnabled,
+      vatRateBps: row.vatRateBps,
+      companyPin: row.companyPin,
+      payments: parsePaymentSnapshot(row.paymentSnapshot),
+      notes: row.notes,
+      lines: [...row.lines]
+        .sort((a, b) => a.position - b.position)
+        .map((line) => ({
+          id: line.id,
+          description: line.description,
+          quantityHundredths: line.quantityHundredths,
+          rateCents: line.rateCents,
+        })),
+    })),
+    mailReady: isMailConfigured(),
     vendors,
     assets: assetRows.map((row) => ({
       id: row.id,

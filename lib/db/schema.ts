@@ -769,6 +769,30 @@ export const officeVendors = pgTable(
   (table) => [index('office_vendors_renewal_idx').on(table.renewalDate)],
 )
 
+export const officeExpenses = pgTable(
+  'office_expenses',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    spentOn: date('spent_on'),
+    voucherNo: text('voucher_no'),
+    description: text('description').notNull().default(''),
+    paidTo: text('paid_to'),
+    category: text('category'),
+    amountCents: integer('amount_cents'),
+    paymentMethod: text('payment_method'),
+    receiptNo: text('receipt_no'),
+    approvedBy: text('approved_by'),
+    remarks: text('remarks'),
+    createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index('office_expenses_spent_on_idx').on(table.companyId, table.spentOn)],
+)
+
 export const officeAssets = pgTable(
   'office_assets',
   {
@@ -1176,6 +1200,127 @@ export const documentAcknowledgementsRelations = relations(documentAcknowledgeme
 export const officeVendorsRelations = relations(officeVendors, ({ one }) => ({
   company: one(companies, { fields: [officeVendors.companyId], references: [companies.id] }),
   owner: one(users, { fields: [officeVendors.ownerId], references: [users.id] }),
+}))
+
+export const officeExpensesRelations = relations(officeExpenses, ({ one }) => ({
+  company: one(companies, { fields: [officeExpenses.companyId], references: [companies.id] }),
+  createdBy: one(users, { fields: [officeExpenses.createdById], references: [users.id] }),
+}))
+
+export const officeInvoiceSettings = pgTable('office_invoice_settings', {
+  companyId: uuid('company_id')
+    .primaryKey()
+    .references(() => companies.id, { onDelete: 'cascade' }),
+  vatEnabled: boolean('vat_enabled').notNull().default(true),
+  vatRateBps: integer('vat_rate_bps').notNull().default(1600),
+  companyPin: text('company_pin'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+})
+
+export const officePaymentAccounts = pgTable(
+  'office_payment_accounts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    label: text('label').notNull(),
+    kind: text('kind').notNull(),
+    details: text('details').notNull().default(''),
+    active: boolean('active').notNull().default(true),
+    sortOrder: integer('sort_order').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index('office_payment_accounts_company_idx').on(table.companyId, table.sortOrder)],
+)
+
+export const officeClients = pgTable(
+  'office_clients',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    email: text('email'),
+    phone: text('phone'),
+    address: text('address'),
+    pin: text('pin'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index('office_clients_company_idx').on(table.companyId, table.name)],
+)
+
+export const officeInvoices = pgTable(
+  'office_invoices',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    clientId: uuid('client_id').references(() => officeClients.id, { onDelete: 'set null' }),
+    documentNumber: text('document_number'),
+    status: text('status').notNull().default('draft'),
+    issueDate: date('issue_date').notNull(),
+    dueDate: date('due_date'),
+    clientName: text('client_name').notNull(),
+    clientEmail: text('client_email'),
+    clientPhone: text('client_phone'),
+    clientAddress: text('client_address'),
+    clientPin: text('client_pin'),
+    vatEnabled: boolean('vat_enabled').notNull().default(true),
+    vatRateBps: integer('vat_rate_bps').notNull().default(0),
+    companyPin: text('company_pin'),
+    paymentSnapshot: text('payment_snapshot').notNull().default('[]'),
+    notes: text('notes'),
+    createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('office_invoices_number_idx').on(table.documentNumber),
+    index('office_invoices_company_idx').on(table.companyId, table.issueDate),
+  ],
+)
+
+export const officeInvoiceLines = pgTable(
+  'office_invoice_lines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    invoiceId: uuid('invoice_id')
+      .notNull()
+      .references(() => officeInvoices.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+    description: text('description').notNull(),
+    quantityHundredths: integer('quantity_hundredths').notNull(),
+    rateCents: integer('rate_cents').notNull(),
+  },
+  (table) => [index('office_invoice_lines_invoice_idx').on(table.invoiceId, table.position)],
+)
+
+export const officeInvoiceSettingsRelations = relations(officeInvoiceSettings, ({ one }) => ({
+  company: one(companies, { fields: [officeInvoiceSettings.companyId], references: [companies.id] }),
+}))
+
+export const officePaymentAccountsRelations = relations(officePaymentAccounts, ({ one }) => ({
+  company: one(companies, { fields: [officePaymentAccounts.companyId], references: [companies.id] }),
+}))
+
+export const officeClientsRelations = relations(officeClients, ({ one }) => ({
+  company: one(companies, { fields: [officeClients.companyId], references: [companies.id] }),
+}))
+
+export const officeInvoicesRelations = relations(officeInvoices, ({ one, many }) => ({
+  company: one(companies, { fields: [officeInvoices.companyId], references: [companies.id] }),
+  client: one(officeClients, { fields: [officeInvoices.clientId], references: [officeClients.id] }),
+  createdBy: one(users, { fields: [officeInvoices.createdById], references: [users.id] }),
+  lines: many(officeInvoiceLines),
+}))
+
+export const officeInvoiceLinesRelations = relations(officeInvoiceLines, ({ one }) => ({
+  invoice: one(officeInvoices, { fields: [officeInvoiceLines.invoiceId], references: [officeInvoices.id] }),
 }))
 
 export const officeAssetsRelations = relations(officeAssets, ({ one }) => ({

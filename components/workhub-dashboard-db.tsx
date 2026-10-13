@@ -3280,7 +3280,7 @@ export default function WorkhubDashboardDB({
               <ViewHeading
                 eyebrow="Finance and admin"
                 title="Admin office"
-                description="Leave, letters, imprest, vendors, documents, and the Kenya compliance calendar."
+                description="Leave, letters, the petty cash book, invoices, documents, and the Kenya compliance calendar."
               />
               <AdminOfficeDesk
                 mode="admin"

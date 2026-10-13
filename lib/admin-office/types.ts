@@ -97,6 +97,20 @@ export type OfficeDocument = {
   staffCount: number
 }
 
+export type OfficeExpense = {
+  id: string
+  spentOn: string | null
+  voucherNo: string | null
+  description: string
+  paidTo: string | null
+  category: string | null
+  amountCents: number | null
+  paymentMethod: string | null
+  receiptNo: string | null
+  approvedBy: string | null
+  remarks: string | null
+}
+
 export type OfficeVendor = {
   id: string
   name: string
@@ -149,6 +163,58 @@ export type OfficeOut = {
   endDate: string
 }
 
+export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'void'
+
+export type OfficeInvoiceSettings = {
+  vatEnabled: boolean
+  vatRateBps: number
+  companyPin: string | null
+}
+
+export type OfficePaymentAccount = {
+  id: string
+  label: string
+  kind: 'bank' | 'paybill' | 'other'
+  details: string
+  active: boolean
+}
+
+export type OfficeClient = {
+  id: string
+  name: string
+  email: string | null
+  phone: string | null
+  address: string | null
+  pin: string | null
+}
+
+export type OfficeInvoiceLine = {
+  id: string
+  description: string
+  quantityHundredths: number
+  rateCents: number
+}
+
+export type OfficeInvoice = {
+  id: string
+  documentNumber: string | null
+  status: InvoiceStatus
+  issueDate: string
+  dueDate: string | null
+  clientId: string | null
+  clientName: string
+  clientEmail: string | null
+  clientPhone: string | null
+  clientAddress: string | null
+  clientPin: string | null
+  vatEnabled: boolean
+  vatRateBps: number
+  companyPin: string | null
+  payments: { id: string; label: string; kind: 'bank' | 'paybill' | 'other'; details: string }[]
+  notes: string | null
+  lines: OfficeInvoiceLine[]
+}
+
 export type OfficeDesk = {
   ready: boolean
   setupMessage: string | null
@@ -160,6 +226,12 @@ export type OfficeDesk = {
   requests: OfficeRequest[]
   offers: OfficeOffer[]
   documents: OfficeDocument[]
+  expenses: OfficeExpense[]
+  invoiceSettings: OfficeInvoiceSettings
+  paymentAccounts: OfficePaymentAccount[]
+  clients: OfficeClient[]
+  invoices: OfficeInvoice[]
+  mailReady: boolean
   vendors: OfficeVendor[]
   assets: OfficeAsset[]
   compliance: OfficeComplianceItem[]

@@ -59,6 +59,7 @@ export async function sendMail(input: {
   subject: string
   html: string
   text: string
+  attachments?: { filename: string; content: string; contentType: string }[]
 }) {
   if (!isMailConfigured()) {
     throw new Error('Email delivery is not configured on this workspace yet.')
@@ -69,6 +70,11 @@ export async function sendMail(input: {
     subject: input.subject,
     html: input.html,
     text: input.text,
+    attachments: input.attachments?.map((file) => ({
+      filename: file.filename,
+      content: file.content,
+      contentType: file.contentType,
+    })),
   })
   return info
 }

@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import {
   ADMIN_OFFICE_DEPARTMENT_SLUG,
   canDecideAdminRequest,
@@ -11,6 +11,22 @@ import {
   isManagement,
 } from '@/lib/auth/permissions'
 import { addCadence, addDaysIso, annualAvailableHundredths, isIsoDate, leaveSpanHundredths, nairobiToday, rangesOverlap } from '@/lib/admin-office/leave'
+import { readExpenseWorkbook, writeExpenseWorkbook } from '@/lib/admin-office/expense-workbook'
+import { expenseFingerprint, parseAmountText, type ExpenseDraft } from '@/lib/admin-office/expenses'
+import {
+  amountWithinLimit,
+  buildInvoiceHtml,
+  formatMoney,
+  invoicePlainText,
+  invoiceTotals,
+  lineAmountCents,
+  parsePaymentSnapshot,
+  outlookMailLink,
+  outlookMessage,
+  parseQuantity,
+  parseVatRate,
+  type PaymentKind,
+} from '@/lib/admin-office/invoices'
 import { buildOfferLetter, buildStaffLetter } from '@/lib/admin-office/letters'
 import {
   CARRY_CAP_HUNDREDTHS,
@@ -35,6 +51,12 @@ import {
   officeAssets,
   officeCompliance,
   officeDocuments,
+  officeClients,
+  officeExpenses,
+  officeInvoiceLines,
+  officeInvoiceSettings,
+  officeInvoices,
+  officePaymentAccounts,
   officeVendors,
   staffProfiles,
   tasks,
@@ -1041,4 +1063,552 @@ async function officeRecipients(companyId: string, exceptUserId: string) {
   )
   if (operators.length > 0) return operators
   return rows.filter((row) => row.id !== exceptUserId && row.status === 'active' && canRunAdminOffice(row))
+}
+
+function expenseFromForm(formData: FormData) {
+  const spentOn = dateOrEmpty(field(formData, 'spentOn'))
+  if (spentOn === undefined) return { error: 'Use a real date, or leave it blank.' as const }
+  const description = cleanBlock(field(formData, 'description'), 500)
+  const paidTo = cleanBlock(field(formData, 'paidTo'), 200)
+  if (!description && !paidTo) return { error: 'Add a description or who was paid.' as const }
+  const amountText = field(formData, 'amount')
+  const amountCents = amountText ? parseAmountText(amountText) : null
+  if (amountText && amountCents == null) return { error: 'Enter the amount in shillings, such as 1500 or 10027.11.' as const }
+  const draft: ExpenseDraft = {
+    spentOn,
+    voucherNo: cleanBlock(field(formData, 'voucherNo'), 40),
+    description,
+    paidTo,
+    category: cleanBlock(field(formData, 'category'), 80),
+    amountCents,
+    paymentMethod: cleanBlock(field(formData, 'paymentMethod'), 40),
+    receiptNo: cleanBlock(field(formData, 'receiptNo'), 80),
+    approvedBy: cleanBlock(field(formData, 'approvedBy'), 80),
+    remarks: cleanBlock(field(formData, 'remarks'), 500),
+  }
+  return { draft }
+}
+
+function expenseValues(companyId: string, createdById: string, draft: ExpenseDraft) {
+  return {
+    companyId,
+    createdById,
+    spentOn: draft.spentOn,
+    voucherNo: draft.voucherNo || null,
+    description: draft.description,
+    paidTo: draft.paidTo || null,
+    category: draft.category || null,
+    amountCents: draft.amountCents,
+    paymentMethod: draft.paymentMethod || null,
+    receiptNo: draft.receiptNo || null,
+    approvedBy: draft.approvedBy || null,
+    remarks: draft.remarks || null,
+    updatedAt: new Date(),
+  }
+}
+
+export async function saveExpense(formData: FormData) {
+  const loaded = await actor()
+  if ('error' in loaded) return loaded
+  const { currentUser } = loaded
+  if (!canRunAdminOffice(currentUser)) return { error: 'Only the admin office can record expenses.' }
+  const parsed = expenseFromForm(formData)
+  if ('error' in parsed) return parsed
+  const id = field(formData, 'id')
+  if (id) {
+    const existing = await getDb().query.officeExpenses.findFirst({ where: eq(officeExpenses.id, id) })
+    if (!existing || existing.companyId !== currentUser.companyId) return { error: 'That expense is no longer in the book.' }
+    await getDb().update(officeExpenses).set(expenseValues(currentUser.companyId, currentUser.id, parsed.draft)).where(eq(officeExpenses.id, id))
+    refresh()
+    return { ok: true as const, notice: 'Expense updated.' }
+  }
+  await getDb().insert(officeExpenses).values(expenseValues(currentUser.companyId, currentUser.id, parsed.draft))
+  refresh()
+  return { ok: true as const, notice: 'Expense recorded.' }
+}
+
+export async function deleteExpense(id: string) {
+  const loaded = await actor()
+  if ('error' in loaded) return loaded
+  const { currentUser } = loaded
+  if (!canRunAdminOffice(currentUser)) return { error: 'Only the admin office can remove expenses.' }
+  const existing = await getDb().query.officeExpenses.findFirst({ where: eq(officeExpenses.id, id) })
+  if (!existing || existing.companyId !== currentUser.companyId) return { error: 'That expense is no longer in the book.' }
+  await getDb().delete(officeExpenses).where(eq(officeExpenses.id, id))
+  refresh()
+  return { ok: true as const, notice: 'Expense removed.' }
+}
+
+export async function importExpenses(formData: FormData) {
+  const loaded = await actor()
+  if ('error' in loaded) return loaded
+  const { currentUser } = loaded
+  if (!canRunAdminOffice(currentUser)) return { error: 'Only the admin office can import expenses.' }
+  const file = formData.get('file')
+  if (!(file instanceof File)) return { error: 'Choose an Excel workbook (.xlsx).' }
+  const name = file.name.toLowerCase()
+  if (!name.endsWith('.xlsx')) return { error: 'Use an Excel workbook (.xlsx), the same kind as the petty cash book.' }
+  if (file.size > 5_000_000) return { error: 'That workbook is larger than 5 MB.' }
+  const buffer = Buffer.from(await file.arrayBuffer())
+  const parsed = await readExpenseWorkbook(buffer)
+  if ('error' in parsed) return parsed
+  const replace = field(formData, 'replace') === 'yes'
+  const existing = await getDb().select().from(officeExpenses).where(eq(officeExpenses.companyId, currentUser.companyId))
+  const existingKeys = new Set(existing.map((row) => expenseFingerprint({
+    spentOn: row.spentOn,
+    paidTo: row.paidTo ?? '',
+    description: row.description,
+    amountCents: row.amountCents,
+    receiptNo: row.receiptNo ?? '',
+  })))
+  const seen = new Set<string>()
+  const fresh: ExpenseDraft[] = []
+  let skipped = 0
+  for (const row of parsed.rows) {
+    const key = expenseFingerprint(row)
+    if (seen.has(key) || (!replace && existingKeys.has(key))) {
+      skipped += 1
+      continue
+    }
+    seen.add(key)
+    fresh.push(row)
+  }
+  if (fresh.length === 0) {
+    return { ok: true as const, notice: skipped > 0 ? `Nothing new to add. ${skipped} row${skipped === 1 ? '' : 's'} already in the book.` : 'The workbook had no new expenses.' }
+  }
+  await getDb().insert(officeExpenses).values(fresh.map((row) => expenseValues(currentUser.companyId, currentUser.id, row)))
+  if (replace && existing.length > 0) {
+    await getDb().delete(officeExpenses).where(inArray(officeExpenses.id, existing.map((row) => row.id)))
+  }
+  refresh()
+  const missing = fresh.filter((row) => row.amountCents == null).length
+  const missingNote = missing > 0 ? ` ${missing} still need an amount.` : ''
+  const skippedNote = skipped > 0 ? ` ${skipped} matching row${skipped === 1 ? '' : 's'} left as they were.` : ''
+  return {
+    ok: true as const,
+    notice: replace
+      ? `Replaced the book with ${fresh.length} expense${fresh.length === 1 ? '' : 's'}.${missingNote}`
+      : `Added ${fresh.length} expense${fresh.length === 1 ? '' : 's'}.${skippedNote}${missingNote}`,
+  }
+}
+
+export async function exportExpenses() {
+  const loaded = await actor()
+  if ('error' in loaded) return loaded
+  const { currentUser } = loaded
+  if (!canRunAdminOffice(currentUser)) return { error: 'Only the admin office can export expenses.' }
+  const rows = await getDb().select().from(officeExpenses).where(eq(officeExpenses.companyId, currentUser.companyId))
+  const ordered = [...rows].sort((a, b) => (a.spentOn ?? '').localeCompare(b.spentOn ?? ''))
+  const file = await writeExpenseWorkbook(ordered.map((row) => ({
+    spentOn: row.spentOn,
+    voucherNo: row.voucherNo ?? '',
+    description: row.description,
+    paidTo: row.paidTo ?? '',
+    category: row.category ?? '',
+    amountCents: row.amountCents,
+    paymentMethod: row.paymentMethod ?? '',
+    receiptNo: row.receiptNo ?? '',
+    approvedBy: row.approvedBy ?? '',
+    remarks: row.remarks ?? '',
+  })))
+  return { ok: true as const, filename: 'expenses-petty-cash.xlsx', base64: file.toString('base64') }
+}
+
+const PAYMENT_KINDS = new Set<PaymentKind>(['bank', 'paybill', 'other'])
+const INVOICE_STATUSES = new Set(['draft', 'sent', 'paid', 'void'])
+
+function emailOrEmpty(value: string) {
+  if (!value) return null
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) || value.length > 200) return undefined
+  return value
+}
+
+async function officeGate() {
+  const loaded = await actor()
+  if ('error' in loaded) return loaded
+  if (!canRunAdminOffice(loaded.currentUser)) return { error: 'Only the admin office can work with invoices.' as const }
+  return loaded
+}
+
+function invoiceFile(invoice: {
+  documentNumber: string | null
+  issueDate: string
+  dueDate: string | null
+  clientName: string
+  clientEmail: string | null
+  clientAddress: string | null
+  clientPin: string | null
+  companyPin: string | null
+  vatEnabled: boolean
+  vatRateBps: number
+  notes: string | null
+  paymentSnapshot: string
+  lines: { description: string; quantityHundredths: number; rateCents: number }[]
+}) {
+  const payments = parsePaymentSnapshot(invoice.paymentSnapshot)
+  const lines = [...invoice.lines]
+  const shared = {
+    documentNumber: invoice.documentNumber ?? 'Invoice',
+    issueDate: invoice.issueDate,
+    dueDate: invoice.dueDate,
+    clientName: invoice.clientName,
+    companyPin: invoice.companyPin,
+    vatEnabled: invoice.vatEnabled,
+    vatRateBps: invoice.vatRateBps,
+    lines,
+    payments: Array.isArray(payments) ? payments : [],
+    notes: invoice.notes,
+  }
+  const html = buildInvoiceHtml({
+    ...shared,
+    clientEmail: invoice.clientEmail,
+    clientAddress: invoice.clientAddress,
+    clientPin: invoice.clientPin,
+  })
+  const filename = `${(invoice.documentNumber ?? 'invoice').replace(/[^\w.-]+/g, '-')}.html`
+  return { html, filename, text: invoicePlainText(shared), subject: `Invoice ${shared.documentNumber} from Globecon Convergence Solutions` }
+}
+
+export async function saveInvoiceSettings(formData: FormData) {
+  const loaded = await officeGate()
+  if ('error' in loaded) return loaded
+  const vatEnabled = field(formData, 'vatEnabled') === 'yes'
+  const rate = parseVatRate(field(formData, 'vatRate'))
+  if (rate == null) return { error: 'Enter a VAT rate from 0 to 100, such as 16 or 8.' as const }
+  const companyPin = cleanBlock(field(formData, 'companyPin'), 40)
+  await getDb()
+    .insert(officeInvoiceSettings)
+    .values({
+      companyId: loaded.currentUser.companyId,
+      vatEnabled,
+      vatRateBps: rate,
+      companyPin: companyPin || null,
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: officeInvoiceSettings.companyId,
+      set: { vatEnabled, vatRateBps: rate, companyPin: companyPin || null, updatedAt: new Date() },
+    })
+  refresh()
+  return { ok: true as const, notice: 'VAT rate and company PIN saved. New invoices start from these. Invoices already saved keep their own copy.' }
+}
+
+export async function savePaymentAccount(formData: FormData) {
+  const loaded = await officeGate()
+  if ('error' in loaded) return loaded
+  const label = cleanBlock(field(formData, 'label'), 80)
+  const details = cleanBlock(field(formData, 'details'), 1000)
+  const kind = field(formData, 'kind')
+  if (!label) return { error: 'Give this way of paying a name, such as KCB account or Paybill.' as const }
+  if (!details) return { error: 'Write the account or paybill details that should appear on the invoice.' as const }
+  if (!PAYMENT_KINDS.has(kind as PaymentKind)) return { error: 'Choose bank, paybill, or other.' as const }
+  const active = field(formData, 'active') !== 'no'
+  const id = field(formData, 'id')
+  if (id) {
+    const existing = await getDb().query.officePaymentAccounts.findFirst({ where: eq(officePaymentAccounts.id, id) })
+    if (!existing || existing.companyId !== loaded.currentUser.companyId) return { error: 'That payment detail is no longer there.' }
+    await getDb()
+      .update(officePaymentAccounts)
+      .set({ label, details, kind, active, updatedAt: new Date() })
+      .where(eq(officePaymentAccounts.id, id))
+    refresh()
+    return { ok: true as const, notice: 'Payment details updated. Open an invoice and save it again if that invoice should use the new wording.' }
+  }
+  const existing = await getDb().select({ id: officePaymentAccounts.id }).from(officePaymentAccounts).where(eq(officePaymentAccounts.companyId, loaded.currentUser.companyId))
+  await getDb().insert(officePaymentAccounts).values({
+    companyId: loaded.currentUser.companyId,
+    label,
+    details,
+    kind,
+    active,
+    sortOrder: existing.length,
+  })
+  refresh()
+  return { ok: true as const, notice: 'Payment details added. Tick them on the invoices that should show them.' }
+}
+
+export async function deletePaymentAccount(id: string) {
+  const loaded = await officeGate()
+  if ('error' in loaded) return loaded
+  const existing = await getDb().query.officePaymentAccounts.findFirst({ where: eq(officePaymentAccounts.id, id) })
+  if (!existing || existing.companyId !== loaded.currentUser.companyId) return { error: 'That payment detail is no longer there.' }
+  await getDb().delete(officePaymentAccounts).where(eq(officePaymentAccounts.id, id))
+  refresh()
+  return { ok: true as const, notice: 'Payment details removed. Invoices already saved still show the wording they were saved with.' }
+}
+
+export async function saveClient(formData: FormData) {
+  const loaded = await officeGate()
+  if ('error' in loaded) return loaded
+  const name = cleanBlock(field(formData, 'name'), 200)
+  if (!name) return { error: 'Enter the client name.' as const }
+  const email = emailOrEmpty(field(formData, 'email'))
+  if (email === undefined) return { error: 'Enter a real email address, or leave it blank.' as const }
+  const values = {
+    name,
+    email,
+    phone: cleanBlock(field(formData, 'phone'), 40) || null,
+    address: cleanBlock(field(formData, 'address'), 500) || null,
+    pin: cleanBlock(field(formData, 'pin'), 40) || null,
+    updatedAt: new Date(),
+  }
+  const id = field(formData, 'id')
+  if (id) {
+    const existing = await getDb().query.officeClients.findFirst({ where: eq(officeClients.id, id) })
+    if (!existing || existing.companyId !== loaded.currentUser.companyId) return { error: 'That client is no longer saved.' }
+    await getDb().update(officeClients).set(values).where(eq(officeClients.id, id))
+    refresh()
+    return { ok: true as const, notice: 'Client updated.' }
+  }
+  await getDb().insert(officeClients).values({ companyId: loaded.currentUser.companyId, ...values })
+  refresh()
+  return { ok: true as const, notice: 'Client saved. You can pick them on the next invoice.' }
+}
+
+export async function deleteClient(id: string) {
+  const loaded = await officeGate()
+  if ('error' in loaded) return loaded
+  const existing = await getDb().query.officeClients.findFirst({ where: eq(officeClients.id, id) })
+  if (!existing || existing.companyId !== loaded.currentUser.companyId) return { error: 'That client is no longer saved.' }
+  await getDb().delete(officeClients).where(eq(officeClients.id, id))
+  refresh()
+  return { ok: true as const, notice: 'Client removed. Invoices already written keep the name that was on them.' }
+}
+
+function invoiceLinesFromForm(formData: FormData) {
+  const raw = field(formData, 'lines')
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return { error: 'Add at least one line to the invoice.' as const }
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0 || parsed.length > 40) return { error: 'Add between 1 and 40 lines.' as const }
+  const lines: { description: string; quantityHundredths: number; rateCents: number }[] = []
+  for (const item of parsed) {
+    if (!item || typeof item !== 'object') return { error: 'Check the invoice lines.' as const }
+    const row = item as Record<string, unknown>
+    const description = typeof row.description === 'string' ? cleanBlock(row.description, 300) : ''
+    const quantity = typeof row.quantity === 'string' ? parseQuantity(row.quantity) : null
+    const rate = typeof row.rate === 'string' ? parseAmountText(row.rate) : null
+    if (!description) return { error: 'Each line needs a description.' as const }
+    if (quantity == null) return { error: 'Enter a quantity such as 1 or 1.5.' as const }
+    if (rate == null) return { error: 'Enter each rate in shillings, such as 25000.' as const }
+    if (!amountWithinLimit(lineAmountCents(quantity, rate))) return { error: 'One of the line amounts is too large.' as const }
+    lines.push({ description, quantityHundredths: quantity, rateCents: rate })
+  }
+  return { lines }
+}
+
+export async function saveInvoice(formData: FormData) {
+  const loaded = await officeGate()
+  if ('error' in loaded) return loaded
+  const clientName = cleanBlock(field(formData, 'clientName'), 200)
+  if (!clientName) return { error: 'Enter who the invoice is for.' as const }
+  const clientEmail = emailOrEmpty(field(formData, 'clientEmail'))
+  if (clientEmail === undefined) return { error: 'Enter a real client email, or leave it blank until you are ready to send.' as const }
+  const issueDate = dateOrEmpty(field(formData, 'issueDate'))
+  if (!issueDate) return { error: 'Enter the invoice date.' as const }
+  const dueDate = dateOrEmpty(field(formData, 'dueDate'))
+  if (dueDate === undefined) return { error: 'Enter a real due date, or leave it blank.' as const }
+  const vatEnabled = field(formData, 'vatEnabled') === 'yes'
+  const vatRateBps = parseVatRate(field(formData, 'vatRate') || '0')
+  if (vatRateBps == null) return { error: 'Enter the VAT rate for this invoice, such as 16. You can change it later.' as const }
+  const parsedLines = invoiceLinesFromForm(formData)
+  if ('error' in parsedLines) return parsedLines
+  const totals = invoiceTotals(parsedLines.lines, vatEnabled, vatRateBps)
+  if (!amountWithinLimit(totals.totalCents)) return { error: 'The invoice total is too large.' as const }
+  const paymentIds = formData.getAll('paymentId').filter((value): value is string => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value))
+  const accounts = paymentIds.length
+    ? await getDb().select().from(officePaymentAccounts).where(and(eq(officePaymentAccounts.companyId, loaded.currentUser.companyId), inArray(officePaymentAccounts.id, paymentIds)))
+    : []
+  const payments = paymentIds.flatMap((id) => {
+    const account = accounts.find((row) => row.id === id)
+    if (!account) return []
+    const kind: PaymentKind = account.kind === 'bank' || account.kind === 'paybill' || account.kind === 'other' ? account.kind : 'other'
+    return [{ id: account.id, label: account.label, kind, details: account.details }]
+  })
+  const billTo = {
+    clientName,
+    clientEmail,
+    clientPhone: cleanBlock(field(formData, 'clientPhone'), 40) || null,
+    clientAddress: cleanBlock(field(formData, 'clientAddress'), 500) || null,
+    clientPin: cleanBlock(field(formData, 'clientPin'), 40) || null,
+  }
+  let clientId = field(formData, 'clientId')
+  if (clientId) {
+    const client = await getDb().query.officeClients.findFirst({ where: eq(officeClients.id, clientId) })
+    if (!client || client.companyId !== loaded.currentUser.companyId) return { error: 'That client is no longer saved. Pick them again or save a new one.' }
+    if (field(formData, 'updateClient') === 'yes') {
+      await getDb()
+        .update(officeClients)
+        .set({
+          name: billTo.clientName,
+          email: billTo.clientEmail,
+          phone: billTo.clientPhone,
+          address: billTo.clientAddress,
+          pin: billTo.clientPin,
+          updatedAt: new Date(),
+        })
+        .where(eq(officeClients.id, clientId))
+    }
+  } else {
+    const [created] = await getDb()
+      .insert(officeClients)
+      .values({
+        companyId: loaded.currentUser.companyId,
+        name: billTo.clientName,
+        email: billTo.clientEmail,
+        phone: billTo.clientPhone,
+        address: billTo.clientAddress,
+        pin: billTo.clientPin,
+      })
+      .returning({ id: officeClients.id })
+    clientId = created?.id ?? ''
+  }
+  const snapshot = {
+    clientId: clientId || null,
+    ...billTo,
+    issueDate,
+    dueDate,
+    vatEnabled,
+    vatRateBps,
+    companyPin: cleanBlock(field(formData, 'companyPin'), 40) || null,
+    paymentSnapshot: JSON.stringify(payments),
+    notes: cleanBlock(field(formData, 'notes'), 1000) || null,
+    updatedAt: new Date(),
+  }
+  const id = field(formData, 'id')
+  let invoiceId = id
+  if (id) {
+    const existing = await getDb().query.officeInvoices.findFirst({ where: eq(officeInvoices.id, id), with: { lines: true } })
+    if (!existing || existing.companyId !== loaded.currentUser.companyId) return { error: 'That invoice is no longer there.' }
+    if (existing.status === 'void') return { error: 'A void invoice stays as it was. Start a new invoice instead.' }
+    await getDb().update(officeInvoices).set(snapshot).where(eq(officeInvoices.id, id))
+    const previous = existing.lines.map((line) => line.id)
+    await getDb().insert(officeInvoiceLines).values(
+      parsedLines.lines.map((line, position) => ({ invoiceId: id, position, ...line })),
+    )
+    if (previous.length > 0) await getDb().delete(officeInvoiceLines).where(inArray(officeInvoiceLines.id, previous))
+  } else {
+    const documentNumber = await nextOfficeNumber('INV')
+    const [created] = await getDb()
+      .insert(officeInvoices)
+      .values({
+        companyId: loaded.currentUser.companyId,
+        createdById: loaded.currentUser.id,
+        documentNumber,
+        status: 'draft',
+        ...snapshot,
+      })
+      .returning({ id: officeInvoices.id })
+    invoiceId = created?.id ?? ''
+    if (invoiceId) {
+      await getDb().insert(officeInvoiceLines).values(
+        parsedLines.lines.map((line, position) => ({ invoiceId, position, ...line })),
+      )
+    }
+  }
+  refresh()
+  return {
+    ok: true as const,
+    id: invoiceId,
+    clientId: snapshot.clientId,
+    notice: 'Invoice saved. The VAT rate, PIN, and payment details on it stay as they are now, even if you change the settings later.',
+  }
+}
+
+export async function setInvoiceStatus(id: string, status: string) {
+  const loaded = await officeGate()
+  if ('error' in loaded) return loaded
+  if (!INVOICE_STATUSES.has(status)) return { error: 'Choose draft, sent, paid, or void.' }
+  const existing = await getDb().query.officeInvoices.findFirst({ where: eq(officeInvoices.id, id) })
+  if (!existing || existing.companyId !== loaded.currentUser.companyId) return { error: 'That invoice is no longer there.' }
+  await getDb().update(officeInvoices).set({ status, updatedAt: new Date() }).where(eq(officeInvoices.id, id))
+  refresh()
+  const labels: Record<string, string> = { draft: 'Marked as a draft.', sent: 'Marked as sent.', paid: 'Marked as paid.', void: 'Invoice voided.' }
+  return { ok: true as const, notice: labels[status] ?? 'Invoice updated.' }
+}
+
+export async function deleteInvoice(id: string) {
+  const loaded = await officeGate()
+  if ('error' in loaded) return loaded
+  const existing = await getDb().query.officeInvoices.findFirst({ where: eq(officeInvoices.id, id) })
+  if (!existing || existing.companyId !== loaded.currentUser.companyId) return { error: 'That invoice is no longer there.' }
+  if (existing.status !== 'draft') return { error: 'Only a draft can be deleted. Void a sent invoice instead, so the number stays on record.' }
+  await getDb().delete(officeInvoices).where(eq(officeInvoices.id, id))
+  refresh()
+  return { ok: true as const, notice: 'Draft deleted.' }
+}
+
+async function savedInvoice(id: string, companyId: string, purpose: 'read' | 'send') {
+  const invoice = await getDb().query.officeInvoices.findFirst({ where: eq(officeInvoices.id, id), with: { lines: true } })
+  if (!invoice || invoice.companyId !== companyId) return { error: 'That invoice is no longer there.' as const }
+  if (purpose === 'send' && invoice.status === 'void') return { error: 'A void invoice is not sent.' as const }
+  if (invoice.lines.length === 0) return { error: 'Add a line and save the invoice first.' as const }
+  return { invoice }
+}
+
+export async function previewInvoice(id: string) {
+  const loaded = await officeGate()
+  if ('error' in loaded) return loaded
+  const found = await savedInvoice(id, loaded.currentUser.companyId, 'read')
+  if ('error' in found) return found
+  const file = invoiceFile(found.invoice)
+  return { ok: true as const, html: file.html, filename: file.filename }
+}
+
+export async function emailInvoice(id: string) {
+  const loaded = await officeGate()
+  if ('error' in loaded) return loaded
+  if (!isMailConfigured()) return { error: 'The shared Task Buddy mailbox is not set up on this workspace yet. Use Open in Outlook instead.' }
+  const found = await savedInvoice(id, loaded.currentUser.companyId, 'send')
+  if ('error' in found) return found
+  if (!found.invoice.clientEmail) return { error: 'Add the client email on this invoice and save it, then send.' }
+  const file = invoiceFile(found.invoice)
+  const totals = invoiceTotals(found.invoice.lines, found.invoice.vatEnabled, found.invoice.vatRateBps)
+  try {
+    await sendMail({
+      to: found.invoice.clientEmail,
+      subject: file.subject,
+      text: file.text,
+      html: `<p>Please find invoice ${found.invoice.documentNumber ?? ''} attached.</p><p>Total: ${formatMoney(totals.totalCents)}</p>${found.invoice.dueDate ? `<p>Due ${found.invoice.dueDate}</p>` : ''}<p>This email was sent from the Task Buddy mailbox.</p>`,
+      attachments: [{ filename: file.filename, content: file.html, contentType: 'text/html' }],
+    })
+  } catch {
+    return { error: 'Task Buddy could not send that email. Nothing was marked as sent. You can open it in Outlook instead.' }
+  }
+  if (found.invoice.status === 'draft') {
+    await getDb().update(officeInvoices).set({ status: 'sent', updatedAt: new Date() }).where(eq(officeInvoices.id, id))
+  }
+  refresh()
+  return {
+    ok: true as const,
+    notice: `Sent from the Task Buddy mailbox to ${found.invoice.clientEmail}. The invoice was attached. You did not need Outlook open.`,
+  }
+}
+
+export async function outlookInvoice(id: string) {
+  const loaded = await officeGate()
+  if ('error' in loaded) return loaded
+  const found = await savedInvoice(id, loaded.currentUser.companyId, 'send')
+  if ('error' in found) return found
+  if (!found.invoice.clientEmail) return { error: 'Add the client email on this invoice and save it, then open Outlook.' }
+  const file = invoiceFile(found.invoice)
+  const text = file.text.replace('The invoice is attached.', 'The invoice file is attached. Please check it and press Send.')
+  const mailtoText = file.text.replace('The invoice is attached.', 'Download the invoice and attach it before you press Send.')
+  const eml = outlookMessage({
+    to: found.invoice.clientEmail,
+    subject: file.subject,
+    text,
+    filename: file.filename,
+    html: file.html,
+  })
+  return {
+    ok: true as const,
+    filename: file.filename.replace(/\.html$/, '.eml'),
+    base64: Buffer.from(eml, 'utf8').toString('base64'),
+    mailto: outlookMailLink({ to: found.invoice.clientEmail, subject: file.subject, body: mailtoText }),
+    notice: 'Outlook file ready.',
+  }
 }

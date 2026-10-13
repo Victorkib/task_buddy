@@ -14,10 +14,12 @@ import {
   saveCompliance,
   saveDocument,
   saveOffer,
-  saveVendor,
   submitAdminRequest,
   updateStaffProfile,
 } from '@/app/admin-office-actions'
+import { ExpensesPanel } from '@/components/admin-office-expenses'
+import { InvoicesPanel } from '@/components/admin-office-invoices'
+import { formatExpenseKes } from '@/lib/admin-office/expenses'
 import { leaveSpanHundredths } from '@/lib/admin-office/leave'
 import { DOCUMENT_STARTERS } from '@/lib/admin-office/letters'
 import {
@@ -38,7 +40,8 @@ const ADMIN_TABS = [
   ['people', 'People'],
   ['calendar', 'Who is out'],
   ['offers', 'Offers'],
-  ['finance', 'Money'],
+  ['finance', 'Expenses'],
+  ['invoices', 'Invoices'],
   ['documents', 'Papers'],
   ['assets', 'Equipment'],
   ['compliance', 'Reminders'],
@@ -129,9 +132,9 @@ export function AdminOfficeDesk({
   }
 
   function run(
-    action: () => Promise<{ error?: string; notice?: string } | void | { html?: string }>,
+    action: () => Promise<{ error?: string; notice?: string; id?: string; clientId?: string | null } | void | { html?: string }>,
     fallback: string,
-    onSuccess?: () => void,
+    onSuccess?: (result?: { id?: string; clientId?: string | null; html?: string; notice?: string }) => void,
   ) {
     setError(null)
     setNotice(null)
@@ -142,7 +145,7 @@ export function AdminOfficeDesk({
         return
       }
       setNotice((result && 'notice' in result && result.notice) || fallback)
-      onSuccess?.()
+      onSuccess?.(result && typeof result === 'object' ? result : undefined)
       router.refresh()
     })
   }
@@ -177,8 +180,9 @@ export function AdminOfficeDesk({
         <OffersPanel desk={desk} pending={pending} canIssue={canIssueOffers} onSave={(formData) => run(() => saveOffer(formData), 'Draft saved.')} onDecide={(id, decision) => run(() => decideOffer(id, decision), 'Offer updated.')} />
       ) : null}
       {active === 'finance' && mode === 'admin' ? (
-        <FinancePanel desk={desk} colleagues={colleagues} pending={pending} onSave={(formData) => run(() => saveVendor(formData), 'Vendor saved.')} />
+        <ExpensesPanel desk={desk} colleagues={colleagues} pending={pending} run={run} />
       ) : null}
+      {active === 'invoices' && mode === 'admin' ? <InvoicesPanel desk={desk} pending={pending} run={run} /> : null}
       {active === 'documents' && mode === 'admin' ? (
         <DocumentsPanel currentUserId={currentUserId} desk={desk} pending={pending} onSave={(formData) => run(() => saveDocument(formData), 'Document saved.')} />
       ) : null}
@@ -231,9 +235,9 @@ function TodayPanel({ desk, onOpen }: { desk: OfficeDesk; onOpen: (tab: string) 
           <span>Approved leave in the next 45 days</span>
         </button>
         <button type="button" className="panel metric-card office-jump" onClick={() => onOpen('finance')}>
-          <span>Imprest still out</span>
-          <strong>{formatKes(desk.imprestOutstandingKes)}</strong>
-          <span>Issued and not yet retired</span>
+          <span>Expenses this month</span>
+          <strong>{formatExpenseKes(desk.expenses.filter((row) => row.spentOn?.startsWith(desk.today.slice(0, 7))).reduce((sum, row) => sum + (row.amountCents ?? 0), 0))}</strong>
+          <span>Open the petty cash book</span>
         </button>
         <button type="button" className="panel metric-card office-jump" onClick={() => onOpen('people')}>
           <span>Leave still owed</span>
@@ -796,54 +800,6 @@ function OffersPanel({
             </div>
           </article>
         ))}
-      </section>
-    </div>
-  )
-}
-
-function FinancePanel({
-  desk,
-  colleagues,
-  pending,
-  onSave,
-}: {
-  desk: OfficeDesk
-  colleagues: { id: string; firstName: string; lastName: string }[]
-  pending: boolean
-  onSave: (formData: FormData) => void
-}) {
-  const money = desk.requests.filter((row) => row.kind === 'imprest' || row.kind === 'purchase')
-  return (
-    <div className="dashboard-grid">
-      <section className="panel">
-        <div className="panel-heading"><div><h2>Imprest and purchases</h2><p>{formatKes(desk.imprestOutstandingKes)} is issued and not retired.</p></div></div>
-        {money.length === 0 ? <p className="empty-state">No money requests yet. People send them from My office.</p> : money.map((row) => (
-          <article key={row.id} className="office-card">
-            <header>
-              <div><strong>{row.title}</strong><p>{row.requestorName}</p></div>
-              <Chip tone={isOpenRequest(row) ? 'attention' : row.status === 'approved' || row.status === 'completed' ? 'good' : 'calm'}>{requestStatusLabel(row.kind, row.status)}</Chip>
-            </header>
-            <p className="office-meta">{REQUEST_KIND_LABELS[row.kind]} · {formatKes(row.amountKes)}</p>
-          </article>
-        ))}
-        <button type="button" className="filter-pill" onClick={() => downloadCsv('imprest.csv', [['Title', 'Person', 'Kind', 'Amount', 'Status'], ...money.map((row) => [row.title, row.requestorName, row.kind, String(row.amountKes), row.status])])}>Export CSV</button>
-      </section>
-      <section className="panel">
-        <div className="panel-heading"><div><h2>Vendors</h2><p>Renewals inside 45 days appear on Today.</p></div></div>
-        <form className="form-grid" onSubmit={(event) => { event.preventDefault(); const form = event.currentTarget; onSave(new FormData(form)); form.reset() }}>
-          <label>Name<input name="name" required /></label>
-          <label>Category<input name="category" placeholder="software, lease, insurance" /></label>
-          <label>Renewal<input type="date" name="renewalDate" /></label>
-          <label>Amount (KES)<input name="amountKes" defaultValue="0" /></label>
-          <label className="span-2">Owner<select name="ownerId" defaultValue=""><option value="">Unassigned</option>{colleagues.map((person) => <option key={person.id} value={person.id}>{person.firstName} {person.lastName}</option>)}</select></label>
-          <label className="span-2">Notes<textarea name="notes" rows={2} /></label>
-          <div className="modal-actions span-2"><Button className="create-button" type="submit" disabled={pending}>Add vendor</Button></div>
-        </form>
-        <ul className="office-list">
-          {desk.vendors.map((vendor) => (
-            <li key={vendor.id}><strong>{vendor.name}</strong> · {vendor.category}{vendor.renewalDate ? ` · renews ${prettyDate(vendor.renewalDate)}` : ''}{vendor.amountKes ? ` · ${formatKes(vendor.amountKes)}` : ''}</li>
-          ))}
-        </ul>
       </section>
     </div>
   )

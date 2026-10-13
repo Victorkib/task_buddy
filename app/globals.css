@@ -1684,3 +1684,53 @@ html:has(.auth-shell) body { background: #020617; }
   .present-hint { margin-left: 0; width: 100%; }
   .present-title { font-size: 36px; }
 }
+
+.expense-book { display: grid; gap: 16px; }
+.expense-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.expense-stats .metric-card strong { font-variant-numeric: tabular-nums; }
+.expense-upload { display: grid; gap: 12px; }
+.expense-upload input[type="file"] { font-size: 13px; }
+.expense-replace { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 650; }
+.expense-filters { display: grid; grid-template-columns: 1.4fr repeat(3, minmax(0, .8fr)); gap: 8px; margin-bottom: 12px; }
+.expense-filters input, .expense-filters select { width: 100%; border: 1px solid var(--input); border-radius: 6px; background: var(--background); padding: 10px 11px; font-size: 14px; }
+.expense-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.expense-chips button { border: 1px solid var(--border); background: var(--background); border-radius: 999px; padding: 6px 10px; font-size: 12px; cursor: pointer; }
+.expense-chips button.selected { background: #1a2f6b; color: #fff; border-color: #1a2f6b; }
+.expense-table-wrap { overflow: auto; max-height: 640px; }
+.expense-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.expense-table th { position: sticky; top: 0; z-index: 1; background: var(--card); text-align: left; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted-foreground); padding: 8px; }
+.expense-table td { padding: 9px 8px; border-top: 1px solid var(--border); vertical-align: top; }
+.expense-table tbody tr { cursor: pointer; }
+.expense-table tbody tr:hover { background: color-mix(in oklch, #1a2f6b 5%, transparent); }
+.expense-table tr.is-selected { background: color-mix(in oklch, #1a2f6b 10%, transparent); }
+.expense-table tr.is-missing { box-shadow: inset 3px 0 oklch(.62 .14 55); }
+.expense-amount { font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 700; }
+@media (max-width: 900px) {
+  .expense-stats, .expense-filters { grid-template-columns: 1fr 1fr; }
+}
+
+.invoice-book { display: grid; gap: 16px; }
+.invoice-book form > label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 650; }
+.invoice-book .form-grid label.expense-replace { flex-direction: row; align-items: center; grid-column: 1 / -1; }
+.invoice-book textarea { width: 100%; border: 1px solid var(--input); border-radius: 6px; background: var(--background); padding: 10px 11px; font-size: 14px; font-family: inherit; }
+.invoice-lines { display: grid; gap: 10px; margin: 12px 0; }
+.invoice-line { display: grid; grid-template-columns: minmax(0, 1.6fr) 90px 140px auto; gap: 8px; align-items: end; }
+.invoice-line label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 650; }
+.invoice-line input { width: 100%; border: 1px solid var(--input); border-radius: 6px; background: var(--background); padding: 10px 11px; font-size: 14px; }
+.invoice-payments { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin: 12px 0; display: grid; gap: 8px; }
+.invoice-payments legend { padding: 0 6px; font-size: 13px; font-weight: 700; }
+.invoice-payments em { margin-left: 8px; color: var(--muted-foreground); font-style: normal; font-weight: 500; }
+.invoice-total { font-variant-numeric: tabular-nums; }
+.invoice-send { display: grid; gap: 12px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+.invoice-send h3 { margin: 0; }
+.invoice-mail { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.invoice-mail p { margin: 0; color: var(--muted-foreground); }
+.invoice-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+.invoice-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.invoice-list button.selected, .invoice-list > li > button { text-align: left; }
+.invoice-list > li > button { border: 1px solid var(--border); background: var(--background); border-radius: 8px; padding: 8px 10px; display: grid; gap: 2px; cursor: pointer; }
+.invoice-list > li > button.selected { border-color: #1a2f6b; background: color-mix(in oklch, #1a2f6b 8%, transparent); }
+.invoice-list em { color: var(--muted-foreground); font-style: normal; white-space: pre-wrap; }
+@media (max-width: 900px) {
+  .invoice-line { grid-template-columns: 1fr; }
+}
