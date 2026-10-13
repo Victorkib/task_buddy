@@ -135,6 +135,7 @@ function blankPayment(): { id: string; label: string; kind: 'bank' | 'paybill' |
 
 export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pending: boolean; run: Run }) {
   const [view, setView] = useState<'invoices' | 'clients' | 'payments'>('invoices')
+  const [composer, setComposer] = useState(false)
   const [form, setForm] = useState<InvoiceForm>(() => blankInvoice(desk))
   const [clientForm, setClientForm] = useState(blankClient)
   const [paymentForm, setPaymentForm] = useState(blankPayment)
@@ -245,21 +246,28 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
     }, 'Outlook ready.')
   }
 
+  const overdue = desk.invoices.filter((invoice) => invoice.status === 'sent' && invoice.dueDate != null && invoice.dueDate < desk.today)
+
   return (
     <div className="invoice-book">
-      <div className="expense-chips" role="tablist">
-        {(
-          [
-            ['invoices', 'Invoices'],
-            ['clients', 'Clients'],
-            ['payments', 'VAT and payment details'],
-          ] as const
-        ).map(([id, label]) => (
-          <button key={id} type="button" className={view === id ? 'selected' : ''} onClick={() => setView(id)}>
-            {label}
-          </button>
-        ))}
-      </div>
+      <header className="office-module-head">
+        <div>
+          <h2>{view === 'clients' ? 'Clients' : view === 'payments' ? 'VAT and payment details' : 'Invoices'}</h2>
+          <p className="office-summary">
+            {view === 'invoices'
+              ? `${desk.invoices.length} saved${overdue.length ? ` · ${overdue.length} past the due date` : ''}`
+              : view === 'clients'
+                ? 'Saved clients can be picked on the next invoice.'
+                : 'The rate, PIN, and ways to pay start each new invoice. Change them whenever they change.'}
+          </p>
+        </div>
+        <div className="office-module-actions">
+          {view !== 'invoices' ? <button type="button" className="office-quiet" onClick={() => setView('invoices')}>Back to invoices</button> : null}
+          <Button type="button" className="create-button" onClick={() => { setView('invoices'); setForm(blankInvoice(desk)); setComposer(true) }}>New invoice</Button>
+          <button type="button" className={`office-quiet${view === 'clients' ? ' selected' : ''}`} onClick={() => setView('clients')}>Clients</button>
+          <button type="button" className={`office-quiet${view === 'payments' ? ' selected' : ''}`} onClick={() => setView('payments')}>VAT and payment details</button>
+        </div>
+      </header>
 
       {view === 'payments' ? (
         <PaymentsView
@@ -276,11 +284,36 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
       ) : null}
 
       {view === 'invoices' ? (
-        <div className="office-split">
-          <form className="card" onSubmit={submitInvoice}>
-            <div className="card-head">
-              <strong>{saved?.documentNumber ?? 'New invoice'}</strong>
-              {saved ? <span>{STATUS_LABEL[saved.status]}</span> : <span>Not saved yet</span>}
+        <div className="office-work">
+          <div className="panel office-record">
+            {desk.invoices.length === 0 ? <p className="empty-state">No invoices yet. Start one when you are ready to bill a client.</p> : null}
+            <ul className="invoice-list">
+              {desk.invoices.map((invoice) => {
+                const total = invoiceTotals(invoice.lines, invoice.vatEnabled, invoice.vatRateBps)
+                const late = invoice.status === 'sent' && invoice.dueDate != null && invoice.dueDate < desk.today
+                return (
+                  <li key={invoice.id}>
+                    <button type="button" className={form.id === invoice.id && composer ? 'selected' : ''} onClick={() => { setForm(formFromInvoice(invoice)); setComposer(true) }}>
+                      <strong>{invoice.documentNumber ?? 'Draft'}</strong>
+                      <span>{invoice.clientName}</span>
+                      <em>
+                        <i className={`office-chip office-chip-${late || invoice.status === 'void' ? 'attention' : invoice.status === 'paid' ? 'good' : 'calm'}`}>{late ? 'Overdue' : STATUS_LABEL[invoice.status]}</i>
+                        {formatMoney(total.totalCents)}
+                      </em>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+          {composer ? (
+          <form className="office-sheet" onSubmit={submitInvoice}>
+            <div className="office-sheet-head">
+              <div>
+                <h2>{saved?.documentNumber ?? 'New invoice'}</h2>
+                <span className={`office-chip office-chip-${saved?.status === 'paid' ? 'good' : saved?.status === 'void' ? 'attention' : 'calm'}`}>{saved ? STATUS_LABEL[saved.status] : 'Not saved yet'}</span>
+              </div>
+              <button type="button" onClick={() => { setComposer(false); setForm(blankInvoice(desk)) }}>Close</button>
             </div>
             <p className="field-hint">
               Clients are saved, so the next invoice can start from the same company. You can still change the name, email, address, or their PIN on this invoice alone.
@@ -539,31 +572,7 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
               </div>
             ) : null}
           </form>
-          <div className="card">
-            <div className="card-head">
-              <strong>Saved invoices</strong>
-              <span>{desk.invoices.length}</span>
-            </div>
-            {desk.invoices.length === 0 ? <p className="field-hint">No invoices yet.</p> : null}
-            <ul className="invoice-list">
-              {desk.invoices.map((invoice) => {
-                const total = invoiceTotals(invoice.lines, invoice.vatEnabled, invoice.vatRateBps)
-                const overdue = invoice.status === 'sent' && invoice.dueDate != null && invoice.dueDate < desk.today
-                return (
-                  <li key={invoice.id}>
-                    <button type="button" className={form.id === invoice.id ? 'selected' : ''} onClick={() => setForm(formFromInvoice(invoice))}>
-                      <strong>{invoice.documentNumber ?? 'Draft'}</strong>
-                      <span>{invoice.clientName}</span>
-                      <em>
-                        {STATUS_LABEL[invoice.status]}
-                        {overdue ? ' · overdue' : ''} · {formatMoney(total.totalCents)}
-                      </em>
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          </div>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -601,7 +610,7 @@ function PaymentsView({
   }
 
   return (
-    <div className="office-split">
+    <div className="office-work">
       <form className="card" key={`${desk.invoiceSettings.vatEnabled}-${desk.invoiceSettings.vatRateBps}-${desk.invoiceSettings.companyPin ?? ''}`} onSubmit={submitSettings}>
         <div className="card-head">
           <strong>VAT and company PIN</strong>
@@ -729,7 +738,7 @@ function ClientsView({
   }
 
   return (
-    <div className="office-split">
+    <div className="office-work">
       <form className="card" onSubmit={submit}>
         <div className="card-head">
           <strong>{form.id ? 'Edit client' : 'New client'}</strong>

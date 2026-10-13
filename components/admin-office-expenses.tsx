@@ -80,6 +80,7 @@ export function ExpensesPanel({
   const [file, setFile] = useState<File | null>(null)
   const [replaceBook, setReplaceBook] = useState(false)
   const [showVendors, setShowVendors] = useState(false)
+  const [sheet, setSheet] = useState<'none' | 'record' | 'upload'>('none')
 
   const categories = useMemo(() => {
     const names = new Set<string>()
@@ -132,7 +133,10 @@ export function ExpensesPanel({
     event.preventDefault()
     const data = new FormData()
     for (const [key, value] of Object.entries(form)) data.set(key, value)
-    run(() => saveExpense(data), 'Expense recorded.', () => setForm(blankForm()))
+    run(() => saveExpense(data), form.id ? 'Expense updated.' : 'Expense recorded.', () => {
+      setForm(blankForm())
+      setSheet('none')
+    })
   }
 
   function upload() {
@@ -166,101 +170,26 @@ export function ExpensesPanel({
 
   return (
     <div className="expense-book">
-      <section className="expense-stats">
-        <article className="panel metric-card">
-          <span>Showing</span>
-          <strong>{formatExpenseKes(totalCents)}</strong>
-          <span>{filtered.length} of {desk.expenses.length} expenses</span>
-        </article>
-        <article className="panel metric-card">
-          <span>This month</span>
-          <strong>{formatExpenseKes(thisMonthCents)}</strong>
-          <span>{monthLabel(thisMonthKey)}</span>
-        </article>
-        <article className="panel metric-card">
-          <span>Needs an amount</span>
-          <strong>{missingAmount}</strong>
-          <span>Rows you can still fill in</span>
-        </article>
-        <article className="panel metric-card">
-          <span>No receipt number</span>
-          <strong>{missingReceipt}</strong>
-          <span>Recorded, receipt still blank</span>
-        </article>
-      </section>
-
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <h2>{form.id ? 'Update this expense' : 'Record an expense'}</h2>
-            <p>The same columns as the petty cash book: date, voucher, what it was, who was paid, and the receipt.</p>
-          </div>
+      <header className="office-module-head">
+        <div>
+          <h2>Expenses</h2>
+          <p className="office-summary">
+            {formatExpenseKes(desk.expenses.reduce((sum, row) => sum + (row.amountCents ?? 0), 0))} in the book
+            {' · '}
+            {formatExpenseKes(thisMonthCents)} in {monthLabel(thisMonthKey)}
+            {missingAmount > 0 ? ` · ${missingAmount} still need an amount` : ''}
+            {missingReceipt > 0 ? ` · ${missingReceipt} without a receipt number` : ''}
+          </p>
         </div>
-        <form className="form-grid" onSubmit={save}>
-          <label>Date<input type="date" value={form.spentOn} onChange={(event) => setField('spentOn', event.target.value)} /></label>
-          <label>Voucher No.<input value={form.voucherNo} onChange={(event) => setField('voucherNo', event.target.value)} placeholder="GC - 006" /></label>
-          <label className="span-2">Description / Particulars<input value={form.description} onChange={(event) => setField('description', event.target.value)} placeholder="Office stationery" /></label>
-          <label>Paid To<input value={form.paidTo} onChange={(event) => setField('paidTo', event.target.value)} placeholder="Supplier or person" /></label>
-          <label>Category<input value={form.category} onChange={(event) => setField('category', event.target.value)} list="expense-categories" placeholder="Stationery" /></label>
-          <label>Amount (KES)<input value={form.amount} onChange={(event) => setField('amount', event.target.value)} inputMode="decimal" placeholder="1500" /></label>
-          <label>Payment Method<input value={form.paymentMethod} onChange={(event) => setField('paymentMethod', event.target.value)} list="expense-methods" placeholder="Mpesa" /></label>
-          <label>Receipt No.<input value={form.receiptNo} onChange={(event) => setField('receiptNo', event.target.value)} /></label>
-          <label>Approved By<input value={form.approvedBy} onChange={(event) => setField('approvedBy', event.target.value)} placeholder="Director" /></label>
-          <label className="span-2">Remarks<textarea rows={2} value={form.remarks} onChange={(event) => setField('remarks', event.target.value)} placeholder="PIN of Company included" /></label>
-          <datalist id="expense-categories">{categories.map((name) => <option key={name} value={name} />)}</datalist>
-          <datalist id="expense-methods">{METHODS.map((name) => <option key={name} value={name} />)}</datalist>
-          <div className="modal-actions span-2">
-            <Button className="create-button" type="submit" disabled={pending}>{form.id ? 'Save changes' : 'Add expense'}</Button>
-            {form.id ? <Button type="button" variant="outline" disabled={pending} onClick={() => setForm(blankForm())}>Cancel</Button> : null}
-            {form.id ? (
-              <Button
-                type="button"
-                variant="outline"
-                disabled={pending}
-                onClick={() => run(() => deleteExpense(form.id), 'Expense removed.', () => setForm(blankForm()))}
-              >
-                Remove
-              </Button>
-            ) : null}
-          </div>
-        </form>
-      </section>
-
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <h2>Upload the petty cash workbook</h2>
-            <p>Use the sheet with Date, Voucher No., Description / Particulars, Paid To, Category, Amount (KES), Payment Method, Receipt No., Approved By, and Remarks. After it lands, you can correct any row.</p>
-          </div>
+        <div className="office-module-actions">
+          <Button type="button" className="create-button" onClick={() => { setForm(blankForm()); setSheet('record') }}>Record</Button>
+          <Button type="button" variant="outline" onClick={() => setSheet(sheet === 'upload' ? 'none' : 'upload')}>Upload Excel</Button>
+          <Button type="button" variant="outline" disabled={pending || desk.expenses.length === 0} onClick={download}>Download</Button>
         </div>
-        <div className="expense-upload">
-          <input
-            type="file"
-            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-          />
-          <label className="expense-replace">
-            <input type="checkbox" checked={replaceBook} onChange={(event) => setReplaceBook(event.target.checked)} />
-            Replace the expenses already saved
-          </label>
-          <div className="modal-actions">
-            <Button type="button" className="create-button" disabled={pending || !file} onClick={upload}>
-              {replaceBook ? 'Replace from Excel' : 'Add from Excel'}
-            </Button>
-            <Button type="button" variant="outline" disabled={pending || desk.expenses.length === 0} onClick={download}>
-              Download Excel
-            </Button>
-          </div>
-        </div>
-      </section>
-
-      <section className="panel table-panel">
-        <div className="panel-heading">
-          <div>
-            <h2>The book</h2>
-            <p>{desk.imprestOutstandingKes > 0 ? `${formatKes(desk.imprestOutstandingKes)} of imprest is still out. Retire it from Decide.` : 'Imprest that is still out shows on Today.'}</p>
-          </div>
-        </div>
+      </header>
+      <div className="office-work">
+      <section className="panel office-record">
+        <p className="office-summary">{formatExpenseKes(totalCents)} in this view · {filtered.length} of {desk.expenses.length}{desk.imprestOutstandingKes > 0 ? ` · ${formatKes(desk.imprestOutstandingKes)} of imprest is still out` : ''}</p>
         <div className="expense-filters">
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search payee, receipt, voucher, or note" />
           <select value={month} onChange={(event) => setMonth(event.target.value)}>
@@ -311,7 +240,7 @@ export function ExpensesPanel({
                   <tr
                     key={row.id}
                     className={form.id === row.id ? 'is-selected' : row.amountCents == null ? 'is-missing' : ''}
-                    onClick={() => setForm(formFromExpense(row))}
+                    onClick={() => { setForm(formFromExpense(row)); setSheet('record') }}
                   >
                     <td>{prettyDate(row.spentOn)}</td>
                     <td>{row.voucherNo || '—'}</td>
@@ -330,8 +259,56 @@ export function ExpensesPanel({
           </div>
         )}
       </section>
-
-      <section className="panel">
+      {sheet === 'record' ? (
+        <form className="office-sheet form-grid" onSubmit={save}>
+          <div className="office-sheet-head span-2">
+            <h2>{form.id ? 'Update this expense' : 'Record an expense'}</h2>
+            <button type="button" onClick={() => { setForm(blankForm()); setSheet('none') }}>Close</button>
+          </div>
+          <p className="field-hint span-2">Date, voucher, what it was, who was paid, and the receipt. The same columns as the petty cash book.</p>
+          <label>Date<input type="date" value={form.spentOn} onChange={(event) => setField('spentOn', event.target.value)} /></label>
+          <label>Voucher No.<input value={form.voucherNo} onChange={(event) => setField('voucherNo', event.target.value)} placeholder="GC - 006" /></label>
+          <label className="span-2">Description / Particulars<input value={form.description} onChange={(event) => setField('description', event.target.value)} placeholder="Office stationery" /></label>
+          <label>Paid To<input value={form.paidTo} onChange={(event) => setField('paidTo', event.target.value)} placeholder="Supplier or person" /></label>
+          <label>Category<input value={form.category} onChange={(event) => setField('category', event.target.value)} list="expense-categories" placeholder="Stationery" /></label>
+          <label>Amount (KES)<input value={form.amount} onChange={(event) => setField('amount', event.target.value)} inputMode="decimal" placeholder="1500" /></label>
+          <label>Payment Method<input value={form.paymentMethod} onChange={(event) => setField('paymentMethod', event.target.value)} list="expense-methods" placeholder="Mpesa" /></label>
+          <label>Receipt No.<input value={form.receiptNo} onChange={(event) => setField('receiptNo', event.target.value)} /></label>
+          <label>Approved By<input value={form.approvedBy} onChange={(event) => setField('approvedBy', event.target.value)} placeholder="Director" /></label>
+          <label className="span-2">Remarks<textarea rows={2} value={form.remarks} onChange={(event) => setField('remarks', event.target.value)} placeholder="PIN of Company included" /></label>
+          <datalist id="expense-categories">{categories.map((name) => <option key={name} value={name} />)}</datalist>
+          <datalist id="expense-methods">{METHODS.map((name) => <option key={name} value={name} />)}</datalist>
+          <div className="modal-actions span-2">
+            <Button className="create-button" type="submit" disabled={pending}>{form.id ? 'Save changes' : 'Add expense'}</Button>
+            {form.id ? (
+              <Button type="button" variant="outline" disabled={pending} onClick={() => run(() => deleteExpense(form.id), 'Expense removed.', () => { setForm(blankForm()); setSheet('none') })}>
+                Remove
+              </Button>
+            ) : null}
+          </div>
+        </form>
+      ) : null}
+      {sheet === 'upload' ? (
+        <aside className="office-sheet">
+          <div className="office-sheet-head">
+            <h2>Upload the petty cash workbook</h2>
+            <button type="button" onClick={() => setSheet('none')}>Close</button>
+          </div>
+          <p className="field-hint">Use the sheet with Date, Voucher No., Description, Paid To, Category, Amount, Payment Method, Receipt No., Approved By, and Remarks. You can correct any row after it lands.</p>
+          <div className="expense-upload">
+            <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
+            <label className="expense-replace">
+              <input type="checkbox" checked={replaceBook} onChange={(event) => setReplaceBook(event.target.checked)} />
+              Replace the expenses already saved
+            </label>
+            <Button type="button" className="create-button" disabled={pending || !file} onClick={upload}>
+              {replaceBook ? 'Replace from Excel' : 'Add from Excel'}
+            </Button>
+          </div>
+        </aside>
+      ) : null}
+      </div>
+      <section className="panel office-vendors">
         <div className="panel-heading">
           <div>
             <h2>Vendors</h2>

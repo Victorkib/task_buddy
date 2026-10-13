@@ -1443,7 +1443,45 @@ html:has(.auth-shell) body { background: #020617; }
   .profile-photo-row { flex-direction: column; }
 }
 
-.office-desk { display: flex; flex-direction: column; gap: 16px; }
+.office-desk { display: grid; grid-template-columns: 196px minmax(0, 1fr); gap: 22px; align-items: start; }
+.office-rail { display: flex; flex-direction: column; gap: 16px; position: sticky; top: 12px; }
+.office-rail-group { display: flex; flex-direction: column; gap: 2px; }
+.office-rail-group > span { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted-foreground); padding: 0 10px 4px; }
+.office-rail button { border: 0; background: transparent; color: var(--muted-foreground); border-radius: 8px; display: flex; align-items: center; gap: 8px; text-align: left; padding: 8px 10px; font-size: 13px; font-weight: 650; cursor: pointer; width: 100%; }
+.office-rail button:hover { color: var(--foreground); background: color-mix(in oklch, var(--foreground) 5%, transparent); }
+.office-rail button.selected { background: #22c55e; color: #052e16; font-weight: 700; }
+.office-rail button em { margin-left: auto; font-style: normal; font-size: 11px; background: #15803d; color: #fff; border-radius: 999px; padding: 1px 6px; }
+.office-stage { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.office-module-head, .office-sheet-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.office-module-head h2, .office-sheet-head h2 { margin: 0; font-size: 18px; letter-spacing: -.03em; }
+.office-module-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
+.office-quiet { border: 0; background: transparent; color: var(--muted-foreground); font-size: 13px; font-weight: 650; cursor: pointer; padding: 6px 8px; border-radius: 8px; }
+.office-quiet:hover, .office-quiet.selected { color: var(--foreground); background: color-mix(in oklch, #1a2f6b 8%, transparent); }
+.office-summary { margin: 4px 0 0; color: var(--muted-foreground); font-size: 13px; }
+.office-work { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+.office-work:has(.office-sheet), .office-work:has(.card) { grid-template-columns: minmax(0, 1fr) minmax(300px, 440px); }
+.office-record { min-width: 0; }
+.office-sheet { position: sticky; top: 12px; max-height: calc(100vh - 96px); overflow: auto; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: grid; gap: 10px; align-content: start; }
+.office-sheet-head button, .office-sheet .office-sheet-head button { border: 0; background: transparent; color: var(--muted-foreground); font-weight: 700; cursor: pointer; }
+.office-filter { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.office-filter button { border: 1px solid var(--border); background: var(--background); color: var(--muted-foreground); border-radius: 999px; padding: 5px 10px; font-size: 12px; font-weight: 650; cursor: pointer; }
+.office-filter button.selected, .office-filter button:hover { color: var(--foreground); border-color: var(--foreground); }
+.office-stage .office-card, .office-stage .card { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-top: 8px; background: var(--card); }
+.card-head { display: flex; justify-content: space-between; gap: 8px; align-items: center; margin-bottom: 8px; }
+.office-sheet-head > div { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.office-stage .metric-grid { margin-bottom: 0; }
+.office-stage .office-list { list-style: none; padding-left: 0; }
+.office-stage .office-list li { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.invoice-list > li > button { width: 100%; }
+.invoice-list > li > button em { display: flex; gap: 8px; align-items: center; }
+.invoice-list i { font-style: normal; }
+@media (max-width: 980px) {
+  .office-desk { grid-template-columns: 1fr; }
+  .office-rail { position: static; flex-direction: row; overflow: auto; gap: 18px; }
+  .office-rail-group { min-width: max-content; }
+  .office-work:has(.office-sheet), .office-work:has(.card) { grid-template-columns: 1fr; }
+  .office-sheet { position: static; max-height: none; }
+}
 .office-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
 .office-tabs button {
   border: 1px solid var(--border);

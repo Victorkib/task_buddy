@@ -34,23 +34,15 @@ import {
 } from '@/lib/admin-office/policy'
 import type { AdminRequestKind, OfficeDesk, OfficeLetterType, OfficeRequest } from '@/lib/admin-office/types'
 
-const ADMIN_TABS = [
-  ['today', 'Today'],
-  ['inbox', 'Decide'],
-  ['people', 'People'],
-  ['calendar', 'Who is out'],
-  ['offers', 'Offers'],
-  ['finance', 'Expenses'],
-  ['invoices', 'Invoices'],
-  ['documents', 'Papers'],
-  ['assets', 'Equipment'],
-  ['compliance', 'Reminders'],
+const ADMIN_GROUPS = [
+  { label: 'Today', items: [['today', 'Today'], ['inbox', 'Decide']] },
+  { label: 'People', items: [['people', 'People'], ['calendar', 'Who is out'], ['offers', 'Offers']] },
+  { label: 'Money', items: [['finance', 'Expenses'], ['invoices', 'Invoices']] },
+  { label: 'House', items: [['documents', 'Papers'], ['assets', 'Equipment'], ['compliance', 'Reminders']] },
 ] as const
 
-const SELF_TABS = [
-  ['request', 'Ask for something'],
-  ['mine', 'My requests'],
-  ['policies', 'Policies'],
+const SELF_GROUPS = [
+  { label: 'My office', items: [['request', 'Ask for something'], ['mine', 'My requests'], ['policies', 'Policies']] },
 ] as const
 
 const ASK_CHOICES: Array<{ kind: AdminRequestKind; label: string; hint: string }> = [
@@ -117,7 +109,8 @@ export function AdminOfficeDesk({
 }) {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const tabs = mode === 'admin' ? ADMIN_TABS : SELF_TABS
+  const groups: ReadonlyArray<{ label: string; items: ReadonlyArray<readonly [string, string]> }> = mode === 'admin' ? ADMIN_GROUPS : SELF_GROUPS
+  const tabs = groups.flatMap((group) => group.items)
   const requested = searchParams.get('desk')
   const active = tabs.some((tab) => tab[0] === requested) ? requested! : tabs[0][0]
   const [error, setError] = useState<string | null>(null)
@@ -152,17 +145,23 @@ export function AdminOfficeDesk({
 
   return (
     <div className="office-desk">
+      <nav className="office-rail" aria-label={mode === 'admin' ? 'Admin office' : 'My office'}>
+        {groups.map((group) => (
+          <div key={group.label} className="office-rail-group">
+            <span>{group.label}</span>
+            {group.items.map(([id, label]) => (
+              <button key={id} type="button" className={active === id ? 'selected' : ''} onClick={() => openDesk(id)}>
+                {label}
+                {id === 'inbox' && desk.pendingCount > 0 ? <em>{desk.pendingCount}</em> : null}
+              </button>
+            ))}
+          </div>
+        ))}
+      </nav>
+      <div className="office-stage">
       {desk.setupMessage ? <p className="form-error">{desk.setupMessage}</p> : null}
       {error ? <p className="form-error">{error}</p> : null}
       {notice ? <p className="form-success">{notice}</p> : null}
-      <div className="office-tabs" role="tablist">
-        {tabs.map(([id, label]) => (
-          <button key={id} type="button" className={active === id ? 'selected' : ''} onClick={() => openDesk(id)}>
-            {label}
-            {id === 'inbox' && desk.pendingCount > 0 ? <em>{desk.pendingCount}</em> : null}
-          </button>
-        ))}
-      </div>
       {active === 'today' && mode === 'admin' ? <TodayPanel desk={desk} onOpen={openDesk} /> : null}
       {active === 'inbox' && mode === 'admin' ? (
         <InboxPanel
@@ -216,6 +215,7 @@ export function AdminOfficeDesk({
       {active === 'policies' && mode === 'self' ? (
         <PoliciesPanel desk={desk} pending={pending} onAck={(id) => run(() => acknowledgeDocument(id), 'Acknowledged.')} />
       ) : null}
+      </div>
     </div>
   )
 }
@@ -292,7 +292,7 @@ function InboxPanel({
           <p>Waiting items sit at the top. Leave over 10 working days, and money of KES 10,000 or more, goes to the managing director when you approve it.</p>
         </div>
       </div>
-      <div className="office-tabs">
+      <div className="office-filter">
         <button type="button" className={kind === 'all' ? 'selected' : ''} onClick={() => setKind('all')}>All</button>
         {(Object.keys(REQUEST_KIND_LABELS) as AdminRequestKind[]).map((key) => (
           <button key={key} type="button" className={kind === key ? 'selected' : ''} onClick={() => setKind(key)}>{REQUEST_KIND_LABELS[key]}</button>
@@ -762,25 +762,19 @@ function OffersPanel({
   onSave: (formData: FormData) => void
   onDecide: (id: string, decision: 'send' | 'issue' | 'accept' | 'decline' | 'withdraw') => void
 }) {
+  const [composing, setComposing] = useState(false)
+  const offers = [...desk.offers].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   return (
-    <div className="dashboard-grid">
-      <section className="panel">
-        <div className="panel-heading"><div><h2>New offer</h2><p>The managing director issues it. The letter is numbered when it is issued.</p></div></div>
-        <form className="form-grid" onSubmit={(event) => { event.preventDefault(); const form = event.currentTarget; onSave(new FormData(form)); form.reset() }}>
-          <label>Candidate<input name="candidateName" required /></label>
-          <label>Email<input name="candidateEmail" type="email" /></label>
-          <label>Job title<input name="jobTitle" required /></label>
-          <label>Department<select name="departmentId" defaultValue=""><option value="">Unassigned</option>{desk.departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}</select></label>
-          <label>Start<input type="date" name="startDate" /></label>
-          <label>Probation (months)<input name="probationMonths" defaultValue="3" /></label>
-          <label className="span-2">Compensation<input name="salaryText" placeholder="KES 80,000 per month" /></label>
-          <label className="span-2">Extra terms<textarea name="notes" rows={2} /></label>
-          <div className="modal-actions span-2"><Button className="create-button" type="submit" disabled={pending}>Save draft</Button></div>
-        </form>
-      </section>
-      <section className="panel">
-        <div className="panel-heading"><div><h2>Offers</h2></div></div>
-        {desk.offers.length === 0 ? <p className="empty-state">No offers yet.</p> : [...desk.offers].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((offer) => (
+    <div className="office-work">
+      <section className="panel office-record">
+        <div className="panel-heading">
+          <div>
+            <h2>Offers</h2>
+            <p>The managing director issues a letter. It is numbered when it is issued.</p>
+          </div>
+          <Button type="button" className="create-button" onClick={() => setComposing(true)}>New offer</Button>
+        </div>
+        {offers.length === 0 ? <p className="empty-state">No offers yet.</p> : offers.map((offer) => (
           <article key={offer.id} className="office-card">
             <header><div><strong>{offer.candidateName}</strong><p>{offer.jobTitle}{offer.departmentName ? ` · ${offer.departmentName}` : ''}</p></div><Chip>{OFFER_STATUS_LABELS[offer.status] ?? offer.status}</Chip></header>
             <p className="office-meta">{offer.documentNumber ?? 'Draft number'}{offer.salaryText ? ` · ${offer.salaryText}` : ''}{offer.startDate ? ` · starts ${prettyDate(offer.startDate)}` : ''}</p>
@@ -801,6 +795,23 @@ function OffersPanel({
           </article>
         ))}
       </section>
+      {composing ? (
+        <form className="office-sheet form-grid" onSubmit={(event) => { event.preventDefault(); const form = event.currentTarget; onSave(new FormData(form)); form.reset(); setComposing(false) }}>
+          <div className="office-sheet-head span-2">
+            <h2>New offer</h2>
+            <button type="button" onClick={() => setComposing(false)}>Close</button>
+          </div>
+          <label>Candidate<input name="candidateName" required /></label>
+          <label>Email<input name="candidateEmail" type="email" /></label>
+          <label>Job title<input name="jobTitle" required /></label>
+          <label>Department<select name="departmentId" defaultValue=""><option value="">Unassigned</option>{desk.departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}</select></label>
+          <label>Start<input type="date" name="startDate" /></label>
+          <label>Probation (months)<input name="probationMonths" defaultValue="3" /></label>
+          <label className="span-2">Compensation<input name="salaryText" placeholder="KES 80,000 per month" /></label>
+          <label className="span-2">Extra terms<textarea name="notes" rows={2} /></label>
+          <div className="modal-actions span-2"><Button className="create-button" type="submit" disabled={pending}>Save draft</Button></div>
+        </form>
+      ) : null}
     </div>
   )
 }
@@ -820,16 +831,27 @@ function DocumentsPanel({
   const [body, setBody] = useState('')
   const [category, setCategory] = useState('policy')
   const [fileUrl, setFileUrl] = useState('')
+  const [composing, setComposing] = useState(false)
   return (
-    <div className="dashboard-grid">
-      <section className="panel">
-        <div className="panel-heading"><div><h2>File a document</h2><p>Published policies ask every person to acknowledge them.</p></div></div>
-        <div className="office-tabs">
-          {DOCUMENT_STARTERS.map((starter) => (
-            <button key={starter.id} type="button" onClick={() => { setTitle(starter.title); setBody(starter.body); setCategory(starter.category) }}>{starter.title}</button>
-          ))}
+    <div className="office-work">
+      <section className="panel office-record">
+        <div className="panel-heading">
+          <div>
+            <h2>Papers</h2>
+            <p>Published policies ask every person to acknowledge them.</p>
+          </div>
+          <Button type="button" className="create-button" onClick={() => setComposing(true)}>File a document</Button>
         </div>
-        <form className="form-grid" onSubmit={(event) => {
+        {desk.documents.length === 0 ? <p className="empty-state">Nothing filed yet.</p> : desk.documents.map((row) => (
+          <article key={row.id} className="office-card">
+            <header><strong>{row.title}</strong><Chip>{row.status}</Chip></header>
+            <p className="office-meta">{row.documentNumber ?? 'No number yet'} · {row.category}{row.reviewDate ? ` · review ${prettyDate(row.reviewDate)}` : ''} · {row.ackCount}/{row.staffCount} acknowledged</p>
+            {row.body ? <p>{row.body}</p> : null}
+          </article>
+        ))}
+      </section>
+      {composing ? (
+      <form className="office-sheet form-grid" onSubmit={(event) => {
           event.preventDefault()
           const formData = new FormData(event.currentTarget)
           if (fileUrl) formData.set('fileUrl', fileUrl)
@@ -837,7 +859,17 @@ function DocumentsPanel({
           setTitle('')
           setBody('')
           setFileUrl('')
+          setComposing(false)
         }}>
+          <div className="office-sheet-head span-2">
+            <h2>File a document</h2>
+            <button type="button" onClick={() => setComposing(false)}>Close</button>
+          </div>
+        <div className="office-filter span-2">
+          {DOCUMENT_STARTERS.map((starter) => (
+            <button key={starter.id} type="button" onClick={() => { setTitle(starter.title); setBody(starter.body); setCategory(starter.category) }}>{starter.title}</button>
+          ))}
+        </div>
           <label className="span-2">Title<input name="title" required value={title} onChange={(event) => setTitle(event.target.value)} /></label>
           <label>Category<input name="category" value={category} onChange={(event) => setCategory(event.target.value)} /></label>
           <label>Status<select name="status" defaultValue="draft"><option value="draft">Draft</option><option value="review">In review</option><option value="published">Published</option></select></label>
@@ -848,18 +880,8 @@ function DocumentsPanel({
             <FileDropzone kind="office_evidence" entityId={currentUserId} label="Or upload the file" onUploaded={(file) => setFileUrl(file.url)} />
           </div>
           <div className="modal-actions span-2"><Button className="create-button" type="submit" disabled={pending}>Save document</Button></div>
-        </form>
-      </section>
-      <section className="panel">
-        <div className="panel-heading"><div><h2>Registry</h2></div></div>
-        {desk.documents.length === 0 ? <p className="empty-state">Nothing filed yet.</p> : desk.documents.map((row) => (
-          <article key={row.id} className="office-card">
-            <header><strong>{row.title}</strong><Chip>{row.status}</Chip></header>
-            <p className="office-meta">{row.documentNumber ?? 'No number yet'} · {row.category}{row.reviewDate ? ` · review ${prettyDate(row.reviewDate)}` : ''} · {row.ackCount}/{row.staffCount} acknowledged</p>
-            {row.body ? <p>{row.body}</p> : null}
-          </article>
-        ))}
-      </section>
+      </form>
+      ) : null}
     </div>
   )
 }
@@ -875,10 +897,24 @@ function AssetsPanel({
   pending: boolean
   onSave: (formData: FormData) => void
 }) {
+  const [composing, setComposing] = useState(false)
   return (
-    <section className="panel">
-      <div className="panel-heading"><div><h2>Assets</h2><p>Laptops, phones, and anything that has to come back when someone leaves.</p></div></div>
-      <form className="form-grid" onSubmit={(event) => { event.preventDefault(); const form = event.currentTarget; onSave(new FormData(form)); form.reset() }}>
+    <div className="office-work">
+      <section className="panel office-record">
+      <div className="panel-heading">
+        <div><h2>Equipment</h2><p>Laptops, phones, and anything that has to come back when someone leaves.</p></div>
+        <Button type="button" className="create-button" onClick={() => setComposing(true)}>Add equipment</Button>
+      </div>
+      <ul className="office-list">
+        {desk.assets.length === 0 ? <li>Nothing is on the register yet.</li> : null}
+        {desk.assets.map((asset) => (
+          <li key={asset.id}><strong>{asset.name}</strong>{asset.assetTag ? ` · ${asset.assetTag}` : ''} · {asset.status}{asset.assignedName ? ` · ${asset.assignedName}` : ''}</li>
+        ))}
+      </ul>
+      </section>
+      {composing ? (
+      <form className="office-sheet form-grid" onSubmit={(event) => { event.preventDefault(); const form = event.currentTarget; onSave(new FormData(form)); form.reset(); setComposing(false) }}>
+        <div className="office-sheet-head span-2"><h2>Add equipment</h2><button type="button" onClick={() => setComposing(false)}>Close</button></div>
         <label>Name<input name="name" required placeholder="Laptop" /></label>
         <label>Tag<input name="assetTag" placeholder="GCS-LT-014" /></label>
         <label>Assigned to<select name="assignedUserId" defaultValue=""><option value="">In stock</option>{colleagues.map((person) => <option key={person.id} value={person.id}>{person.firstName} {person.lastName}</option>)}</select></label>
@@ -886,12 +922,8 @@ function AssetsPanel({
         <label className="span-2">Notes<textarea name="notes" rows={2} /></label>
         <div className="modal-actions span-2"><Button className="create-button" type="submit" disabled={pending}>Add asset</Button></div>
       </form>
-      <ul className="office-list">
-        {desk.assets.map((asset) => (
-          <li key={asset.id}><strong>{asset.name}</strong>{asset.assetTag ? ` · ${asset.assetTag}` : ''} · {asset.status}{asset.assignedName ? ` · ${asset.assignedName}` : ''}</li>
-        ))}
-      </ul>
-    </section>
+      ) : null}
+    </div>
   )
 }
 
@@ -909,13 +941,16 @@ function CompliancePanel({
   const items = [...desk.compliance].sort((a, b) => (a.dueDate ?? '9999').localeCompare(b.dueDate ?? '9999'))
   const cadenceLabel: Record<string, string> = { once: 'One time', monthly: 'Every month', quarterly: 'Every quarter', annual: 'Every year' }
   const dueLabel = { upcoming: 'Coming up', due: 'Due now', overdue: 'Overdue', done: 'Done' }
+  const [composing, setComposing] = useState(false)
   return (
-    <section className="panel">
+    <div className="office-work">
+    <section className="panel office-record">
       <div className="panel-heading">
         <div>
           <h2>Reminders</h2>
           <p>PAYE, NSSF, SHIF, and NITA are reminders, not a tax return. Marking a repeating item done moves it to the next date.</p>
         </div>
+        <Button type="button" className="create-button" onClick={() => setComposing(true)}>Add reminder</Button>
       </div>
       {items.map((item) => (
         <article key={item.id} className="office-card">
@@ -927,7 +962,10 @@ function CompliancePanel({
           {item.status !== 'done' ? <Button type="button" disabled={pending} onClick={() => onDone(item.id)}>Mark done</Button> : null}
         </article>
       ))}
-      <form className="form-grid" onSubmit={(event) => { event.preventDefault(); const form = event.currentTarget; onSave(new FormData(form)); form.reset() }}>
+      </section>
+      {composing ? (
+      <form className="office-sheet form-grid" onSubmit={(event) => { event.preventDefault(); const form = event.currentTarget; onSave(new FormData(form)); form.reset(); setComposing(false) }}>
+        <div className="office-sheet-head span-2"><h2>Add reminder</h2><button type="button" onClick={() => setComposing(false)}>Close</button></div>
         <label>Title<input name="title" required /></label>
         <label>How often<select name="cadence" defaultValue="once"><option value="once">Once</option><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="annual">Annual</option></select></label>
         <label>Due<input type="date" name="dueDate" /></label>
@@ -935,6 +973,7 @@ function CompliancePanel({
         <label className="span-2">Notes<textarea name="notes" rows={2} /></label>
         <div className="modal-actions span-2"><Button className="create-button" type="submit" disabled={pending}>Add reminder</Button></div>
       </form>
-    </section>
+      ) : null}
+    </div>
   )
 }
