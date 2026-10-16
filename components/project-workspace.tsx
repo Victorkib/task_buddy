@@ -1022,13 +1022,20 @@ export function ProjectWorkspace({
             onSubmit={(event) => {
               event.preventDefault()
               run(async () => {
-                const result = await notifyProjectPeople({
+                const payload: {
+                  projectId: string
+                  mode: 'reminder' | 'progress'
+                  audience: 'all' | 'assignees' | 'helpers' | 'selected'
+                  userIds: string[]
+                  note: string
+                } = {
                   projectId: project.id,
                   mode: notifyMode,
                   audience: notifyAudience,
-                  userIds: notifyAudience === 'selected' ? notifySelected : undefined,
-                  note: notifyNote,
-                })
+                  userIds: notifyAudience === 'selected' ? notifySelected : [],
+                  note: notifyNote.trim(),
+                }
+                const result = await notifyProjectPeople(payload)
                 if (result && 'error' in result && result.error) return result
                 if (result && 'ok' in result && result.ok) {
                   const mailBit =
@@ -1037,7 +1044,11 @@ export function ProjectWorkspace({
                       : result.mailed
                         ? ` ${result.mailed} email${result.mailed === 1 ? '' : 's'} sent.`
                         : ''
-                  setNotice(`Notified ${result.notified} ${result.notified === 1 ? 'person' : 'people'}.${mailBit}`)
+                  const failBit =
+                    result.failed && result.failed > 0
+                      ? ` ${result.failed} could not be emailed — try Notify people again for them.`
+                      : ''
+                  setNotice(`Notified ${result.notified} ${result.notified === 1 ? 'person' : 'people'}.${mailBit}${failBit}`)
                   closeDrawer()
                 }
                 return result

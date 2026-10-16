@@ -321,15 +321,22 @@ export function projectProgressRequestEmail(input: {
   items: Array<{ title: string; dueDateLabel?: string | null; role: string }>
   projectUrl: string
   companyName: string
+  kind?: 'progress' | 'reminder'
 }) {
-  const subject = `Progress update requested: ${input.projectTitle}`
+  const kind = input.kind ?? 'progress'
+  const subject =
+    kind === 'reminder' ? `Project work reminder: ${input.projectTitle}` : `Progress update requested: ${input.projectTitle}`
+  const opener =
+    kind === 'reminder'
+      ? `${input.requesterName} sent a work reminder on “${input.projectTitle}” in ${input.companyName}.`
+      : `${input.requesterName} asked for a progress update on “${input.projectTitle}” in ${input.companyName}.`
   const itemLines = input.items
     .map((item) => `- ${item.title}${item.dueDateLabel ? ` (due ${item.dueDateLabel})` : ''} · ${item.role}`)
     .join('\n')
   const text = [
     `Hi ${input.firstName},`,
     '',
-    `${input.requesterName} asked for a progress update on “${input.projectTitle}” in ${input.companyName}.`,
+    opener,
     '',
     input.note,
     '',
@@ -351,14 +358,11 @@ export function projectProgressRequestEmail(input: {
     : ''
 
   const html = layout({
-    title: 'Progress update requested',
-    preheader: `${input.requesterName} asked for an update on ${input.projectTitle}.`,
+    title: kind === 'reminder' ? 'Project work reminder' : 'Progress update requested',
+    preheader: opener,
     bodyHtml: `
       <p style="margin:0 0 14px;font-size:15px;line-height:1.55;">Hi ${escapeHtml(input.firstName)},</p>
-      <p style="margin:0 0 14px;font-size:15px;line-height:1.55;">
-        <strong>${escapeHtml(input.requesterName)}</strong> asked for a progress update on
-        <strong>${escapeHtml(input.projectTitle)}</strong>.
-      </p>
+      <p style="margin:0 0 14px;font-size:15px;line-height:1.55;">${escapeHtml(opener)}</p>
       <div style="margin:14px 0 16px;padding:16px 18px;border-radius:12px;background:#f5f8fc;border:1px solid #d5dee9;font-size:14px;line-height:1.55;white-space:pre-wrap;">${escapeHtml(input.note)}</div>
       ${itemsHtml}
       ${ctaButton(input.projectUrl, `Open project in ${PRODUCT_NAME}`)}

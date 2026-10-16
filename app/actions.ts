@@ -3285,8 +3285,8 @@ export async function notifyProjectPeople(input: {
   projectId: string
   mode: 'reminder' | 'progress'
   audience: 'all' | 'assignees' | 'helpers' | 'selected'
-  userIds?: string[]
-  note?: string
+  userIds?: string[] | null
+  note?: string | null
 }) {
   const currentUser = await getCurrentUser()
   if (!currentUser) return { error: 'Not signed in.' }
@@ -3296,6 +3296,10 @@ export async function notifyProjectPeople(input: {
   if (!canManageProject(currentUser, loaded.access)) {
     return denied('Only the project lead or home department lead can notify people on this project.')
   }
+
+  const selectedIds = Array.isArray(input.userIds)
+    ? input.userIds.filter((id): id is string => typeof id === 'string' && id.length > 0 && id !== '$undefined')
+    : []
 
   const projectTasks = await getDb().query.tasks.findMany({
     where: eq(tasks.projectId, input.projectId),
@@ -3317,7 +3321,7 @@ export async function notifyProjectPeople(input: {
   else if (input.audience === 'helpers') recipientIds = [...helperUserIds]
   else if (input.audience === 'selected') {
     const allowed = new Set([...assigneeIds, ...helperUserIds, ...teamIds])
-    recipientIds = (input.userIds ?? []).filter((id) => allowed.has(id))
+    recipientIds = selectedIds.filter((id) => allowed.has(id))
   } else {
     recipientIds = [...new Set([...assigneeIds, ...helperUserIds, ...teamIds])]
   }
@@ -3326,7 +3330,7 @@ export async function notifyProjectPeople(input: {
   if (recipientIds.length === 0) return { error: 'Choose at least one person on this project to notify.' }
 
   const note =
-    input.note?.trim() ||
+    (typeof input.note === 'string' ? input.note.trim() : '') ||
     (input.mode === 'progress'
       ? `Please share a short progress update on “${loaded.project.title}”.`
       : `Reminder of your work on “${loaded.project.title}”.`)
@@ -3337,39 +3341,46 @@ export async function notifyProjectPeople(input: {
     isMailConfigured,
     projectMailUrl,
     projectProgressRequestEmail,
-    sendTaskAssignmentMail,
     trySendMail,
   } = await import('@/lib/mail/task-notify')
 
   let mailed = 0
   let notified = 0
+  let failed = 0
   for (const userId of recipientIds) {
-    const person = await getUserById(userId)
-    if (!person) continue
+    try {
+      const person = await getUserById(userId)
+      if (!person) {
+        failed += 1
+        continue
+      }
 
-    const theirTasks = projectTasks.filter(
-      (task) => task.assigneeId === userId || (task.helpers ?? []).some((helper) => helper.userId === userId),
-    )
+      const theirTasks = projectTasks.filter(
+        (task) => task.assigneeId === userId || (task.helpers ?? []).some((helper) => helper.userId === userId),
+      )
 
-    await getDb().insert(notifications).values({
-      companyId: loaded.project.companyId,
-      userId,
-      type: 'reminder',
-      title: input.mode === 'progress' ? 'Progress update requested' : 'Project work reminder',
-      body: `${currentUser.firstName} ${currentUser.lastName}: ${note}`,
-      entityType: 'project',
-      entityId: input.projectId,
-    })
-    notified += 1
+      await getDb().insert(notifications).values({
+        companyId: loaded.project.companyId,
+        userId,
+        type: 'reminder',
+        title: input.mode === 'progress' ? 'Progress update requested' : 'Project work reminder',
+        body: `${currentUser.firstName} ${currentUser.lastName}: ${note}`,
+        entityType: 'project',
+        entityId: input.projectId,
+      })
+      notified += 1
 
-    if (input.mode === 'progress') {
+      // One email per person (not per task) so Gmail is less likely to throttle mid-send.
       const sent = await trySendMail(
         person.email,
         projectProgressRequestEmail({
           firstName: person.firstName,
           requesterName: fullName(currentUser),
           projectTitle: loaded.project.title,
-          note,
+          note:
+            input.mode === 'progress'
+              ? note
+              : `${note}\n\nYour work on this project is listed below.`,
           items: theirTasks.map((task) => ({
             title: task.title,
             dueDateLabel: dueDateMailLabel(task.dueDate),
@@ -3377,40 +3388,14 @@ export async function notifyProjectPeople(input: {
           })),
           projectUrl: projectMailUrl(input.projectId),
           companyName: company?.name ?? 'Globecon Convergence Solutions',
+          kind: input.mode === 'progress' ? 'progress' : 'reminder',
         }),
       )
       if (sent) mailed += 1
-    } else {
-      for (const task of theirTasks) {
-        const sent = await sendTaskAssignmentMail({
-          to: person.email,
-          firstName: person.firstName,
-          assignerName: fullName(currentUser),
-          taskTitle: task.title,
-          taskId: task.id,
-          projectTitle: loaded.project.title,
-          dueDate: task.dueDate,
-          brief: note,
-          role: task.assigneeId === userId ? 'assignee' : 'collaborator',
-          companyName: company?.name ?? 'Globecon Convergence Solutions',
-        })
-        if (sent) mailed += 1
-      }
-      if (theirTasks.length === 0) {
-        const sent = await trySendMail(
-          person.email,
-          projectProgressRequestEmail({
-            firstName: person.firstName,
-            requesterName: fullName(currentUser),
-            projectTitle: loaded.project.title,
-            note,
-            items: [],
-            projectUrl: projectMailUrl(input.projectId),
-            companyName: company?.name ?? 'Globecon Convergence Solutions',
-          }),
-        )
-        if (sent) mailed += 1
-      }
+      else if (person.email) failed += 1
+    } catch (error) {
+      console.error('notifyProjectPeople recipient failed', userId, error)
+      failed += 1
     }
   }
 
@@ -3431,6 +3416,7 @@ export async function notifyProjectPeople(input: {
     ok: true as const,
     notified,
     mailed,
+    failed,
     mailReady: isMailConfigured(),
   }
 }
