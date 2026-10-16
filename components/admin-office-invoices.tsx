@@ -139,11 +139,13 @@ type DrawerKind = 'invoice' | 'clients' | 'payments' | null
 function OfficeDrawer({
   title,
   subtitle,
+  badge,
   onClose,
   children,
 }: {
   title: string
   subtitle?: string
+  badge?: ReactNode
   onClose: () => void
   children: ReactNode
 }) {
@@ -184,9 +186,12 @@ function OfficeDrawer({
         tabIndex={-1}
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <header className="dept-drawer-head">
+        <header className="dept-drawer-head office-drawer-head">
           <div className="dept-drawer-title">
-            <h2 id={headingId}>{title}</h2>
+            <div className="office-drawer-title-row">
+              <h2 id={headingId}>{title}</h2>
+              {badge}
+            </div>
             {subtitle ? <p>{subtitle}</p> : null}
           </div>
           <button type="button" className="close-button" aria-label="Close" onClick={onClose}>
@@ -375,214 +380,330 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
       {drawer === 'invoice' ? (
         <OfficeDrawer
           title={saved?.documentNumber ?? 'New invoice'}
-          subtitle={saved ? STATUS_LABEL[saved.status] : 'Not saved yet'}
+          subtitle={saved ? saved.clientName : form.clientName || 'Fill in the client and lines, then save.'}
+          badge={
+            <span
+              className={`office-chip office-chip-${
+                saved?.status === 'paid' ? 'good' : saved?.status === 'void' ? 'attention' : 'calm'
+              }`}
+            >
+              {saved ? STATUS_LABEL[saved.status] : 'Not saved yet'}
+            </span>
+          }
           onClose={closeDrawer}
         >
-          <form className="office-drawer-form" onSubmit={submitInvoice}>
-            <p className="field-hint">
-              Clients are saved, so the next invoice can start from the same company. You can still change the name, email, address, or their PIN on this invoice alone.
-            </p>
-            <div className="form-grid">
-              <label>
-                Client
-                <select value={form.clientId} onChange={(event) => chooseClient(event.target.value)}>
-                  <option value="">New client</option>
-                  {desk.clients.map((client) => (
-                    <option key={client.id} value={client.id}>
-                      {client.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Invoice date
-                <input type="date" value={form.issueDate} onChange={(event) => patch('issueDate', event.target.value)} required />
-              </label>
-              <label className="category-custom">
-                Bill to
-                <input value={form.clientName} onChange={(event) => patch('clientName', event.target.value)} required />
-              </label>
-              <label>
-                Email
-                <input type="email" value={form.clientEmail} onChange={(event) => patch('clientEmail', event.target.value)} />
-              </label>
-              <label>
-                Phone
-                <input value={form.clientPhone} onChange={(event) => patch('clientPhone', event.target.value)} />
-              </label>
-              <label>
-                Their PIN
-                <input value={form.clientPin} onChange={(event) => patch('clientPin', event.target.value)} />
-              </label>
-              <label>
-                Due date
-                <input type="date" value={form.dueDate} onChange={(event) => patch('dueDate', event.target.value)} />
-              </label>
-              <label className="category-custom">
-                Address
-                <textarea rows={2} value={form.clientAddress} onChange={(event) => patch('clientAddress', event.target.value)} />
-              </label>
-            </div>
-            {form.clientId ? (
-              <label className="expense-replace">
-                <input type="checkbox" checked={form.updateClient} onChange={(event) => patch('updateClient', event.target.checked)} />
-                Save these details back onto the client, so the next invoice starts from them.
-              </label>
-            ) : (
-              <p className="field-hint">A new name is saved as a client you can pick again.</p>
-            )}
-
-            <div className="invoice-lines">
-              {form.lines.map((line, index) => (
-                <div key={index} className="invoice-line">
-                  <label>
-                    Description
-                    <input
-                      value={line.description}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          lines: current.lines.map((item, itemIndex) => (itemIndex === index ? { ...item, description: event.target.value } : item)),
-                        }))
-                      }
-                    />
-                  </label>
-                  <label>
-                    Qty
-                    <input
-                      value={line.quantity}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          lines: current.lines.map((item, itemIndex) => (itemIndex === index ? { ...item, quantity: event.target.value } : item)),
-                        }))
-                      }
-                    />
-                  </label>
-                  <label>
-                    Rate (KES)
-                    <input
-                      value={line.rate}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          lines: current.lines.map((item, itemIndex) => (itemIndex === index ? { ...item, rate: event.target.value } : item)),
-                        }))
-                      }
-                    />
-                  </label>
-                  {form.lines.length > 1 ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setForm((current) => ({ ...current, lines: current.lines.filter((_, itemIndex) => itemIndex !== index) }))}
-                    >
-                      Remove
-                    </Button>
-                  ) : null}
+          <form className="office-drawer-form invoice-drawer-form" onSubmit={submitInvoice}>
+            <section className="invoice-section invoice-section-client">
+              <header className="invoice-section-head">
+                <div>
+                  <h3>Client</h3>
+                  <p>Who this invoice is billed to</p>
                 </div>
-              ))}
-              <Button type="button" variant="outline" onClick={() => setForm((current) => ({ ...current, lines: [...current.lines, { description: '', quantity: '1', rate: '' }] }))}>
-                Add a line
-              </Button>
-            </div>
-
-            <div className="form-grid">
-              <label className="expense-replace">
-                <input type="checkbox" checked={form.vatEnabled} onChange={(event) => patch('vatEnabled', event.target.checked)} />
-                Show VAT on this invoice
-              </label>
-              <label>
-                VAT rate (%)
-                <input value={form.vatRate} onChange={(event) => patch('vatRate', event.target.value)} />
-              </label>
-              <label>
-                Company PIN on this invoice
-                <input value={form.companyPin} onChange={(event) => patch('companyPin', event.target.value)} />
-              </label>
-              <div>
-                <Button type="button" variant="outline" onClick={useCurrentSettings}>
-                  Use the current VAT rate and PIN
-                </Button>
+              </header>
+              <div className="invoice-grid">
+                <label>
+                  Saved client
+                  <select value={form.clientId} onChange={(event) => chooseClient(event.target.value)}>
+                    <option value="">New client</option>
+                    {desk.clients.map((client) => (
+                      <option key={client.id} value={client.id}>
+                        {client.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Invoice date
+                  <input type="date" value={form.issueDate} onChange={(event) => patch('issueDate', event.target.value)} required />
+                </label>
+                <label className="invoice-span">
+                  Bill to
+                  <input value={form.clientName} onChange={(event) => patch('clientName', event.target.value)} required />
+                </label>
+                <label>
+                  Email
+                  <input type="email" value={form.clientEmail} onChange={(event) => patch('clientEmail', event.target.value)} />
+                </label>
+                <label>
+                  Phone
+                  <input value={form.clientPhone} onChange={(event) => patch('clientPhone', event.target.value)} />
+                </label>
+                <label>
+                  Their PIN
+                  <input value={form.clientPin} onChange={(event) => patch('clientPin', event.target.value)} />
+                </label>
+                <label>
+                  Due date
+                  <input type="date" value={form.dueDate} onChange={(event) => patch('dueDate', event.target.value)} />
+                </label>
+                <label className="invoice-span">
+                  Address
+                  <textarea rows={2} value={form.clientAddress} onChange={(event) => patch('clientAddress', event.target.value)} />
+                </label>
               </div>
-            </div>
-            <p className="field-hint">This invoice keeps the rate and PIN you save on it. Changing the company settings later does not rewrite it.</p>
-
-            <fieldset className="invoice-payments">
-              <legend>Show these ways to pay</legend>
-              {saved && saved.payments.some((payment) => !desk.paymentAccounts.some((account) => account.id === payment.id)) ? (
-                <p className="field-hint">
-                  This invoice still has payment wording from an account that was removed. Saving the invoice drops that wording. Add the account again first if it should stay.
-                </p>
-              ) : null}
-              {desk.paymentAccounts.length === 0 ? (
-                <p className="field-hint">No bank or paybill details yet. Add them under VAT and payment details, then tick the ones this client should use.</p>
+              {form.clientId ? (
+                <label className="invoice-check">
+                  <input type="checkbox" checked={form.updateClient} onChange={(event) => patch('updateClient', event.target.checked)} />
+                  <span>Save these details back onto the client for the next invoice</span>
+                </label>
               ) : (
-                desk.paymentAccounts.map((account) => (
-                  <label key={account.id} className="expense-replace">
-                    <input
-                      type="checkbox"
-                      checked={form.paymentIds.includes(account.id)}
-                      onChange={(event) =>
-                        patch(
-                          'paymentIds',
-                          event.target.checked ? [...form.paymentIds, account.id] : form.paymentIds.filter((id) => id !== account.id),
-                        )
-                      }
-                    />
-                    {account.label}
-                    <em>
-                      {account.kind === 'paybill' ? 'Paybill' : account.kind === 'bank' ? 'Bank' : 'Other'}
-                      {account.active ? '' : ' · paused'}
-                    </em>
-                  </label>
-                ))
+                <p className="invoice-note">A new name is saved as a client you can pick again.</p>
               )}
-            </fieldset>
-            <p className="field-hint">Tick the accounts that belong on this invoice. Saving copies that wording onto the invoice, so a later edit to the list does not change invoices you have already saved.</p>
-            <label>
-              Note on the invoice
-              <textarea rows={2} value={form.notes} onChange={(event) => patch('notes', event.target.value)} />
-            </label>
-            {totals ? (
-              <p className="invoice-total">
-                {form.vatEnabled ? `Subtotal ${formatMoney(totals.subtotalCents)} · VAT ${formatMoney(totals.vatCents)} · ` : ''}
-                <strong>Total {formatMoney(totals.totalCents)}</strong>
-              </p>
-            ) : (
-              <p className="field-hint">The total appears when each line has a description, a quantity, and a rate.</p>
-            )}
-            <div className="row-actions">
-              <Button type="submit" disabled={pending || saved?.status === 'void'}>
-                {form.id ? 'Save invoice' : 'Save draft'}
-              </Button>
-              <Button type="button" variant="outline" disabled={pending} onClick={() => openInvoice(blankInvoice(desk))}>
-                New invoice
-              </Button>
-              {saved?.status === 'draft' ? (
+            </section>
+
+            <section className="invoice-section invoice-section-lines">
+              <header className="invoice-section-head">
+                <div>
+                  <h3>Line items</h3>
+                  <p>What you are charging for</p>
+                </div>
+              </header>
+              <div className="invoice-lines">
+                <div className="invoice-line invoice-line-head" aria-hidden="true">
+                  <span>Description</span>
+                  <span>Qty</span>
+                  <span>Rate (KES)</span>
+                  <span>Amount</span>
+                </div>
+                {form.lines.map((line, index) => {
+                  const quantityHundredths = parseQuantity(line.quantity)
+                  const rateCents = parseAmountText(line.rate)
+                  const amount =
+                    quantityHundredths != null && rateCents != null
+                      ? Math.round((quantityHundredths * rateCents) / 100)
+                      : null
+                  return (
+                    <div key={index} className="invoice-line">
+                      <label className="invoice-line-desc">
+                        <span className="sr-only">Description</span>
+                        <input
+                          value={line.description}
+                          placeholder="Description"
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              lines: current.lines.map((item, itemIndex) =>
+                                itemIndex === index ? { ...item, description: event.target.value } : item,
+                              ),
+                            }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="sr-only">Qty</span>
+                        <input
+                          value={line.quantity}
+                          inputMode="decimal"
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              lines: current.lines.map((item, itemIndex) =>
+                                itemIndex === index ? { ...item, quantity: event.target.value } : item,
+                              ),
+                            }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span className="sr-only">Rate</span>
+                        <input
+                          value={line.rate}
+                          inputMode="decimal"
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              lines: current.lines.map((item, itemIndex) =>
+                                itemIndex === index ? { ...item, rate: event.target.value } : item,
+                              ),
+                            }))
+                          }
+                        />
+                      </label>
+                      <div className="invoice-line-amount">
+                        <strong>{amount != null ? formatMoney(amount) : '—'}</strong>
+                        {form.lines.length > 1 ? (
+                          <button
+                            type="button"
+                            className="invoice-line-remove"
+                            onClick={() =>
+                              setForm((current) => ({
+                                ...current,
+                                lines: current.lines.filter((_, itemIndex) => itemIndex !== index),
+                              }))
+                            }
+                          >
+                            Remove
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  )
+                })}
                 <Button
                   type="button"
                   variant="outline"
-                  disabled={pending}
-                  onClick={() => {
-                    if (!window.confirm('Delete this draft?')) return
-                    run(() => deleteInvoice(saved.id), 'Draft deleted.', () => {
-                      setForm(blankInvoice(desk))
-                      closeDrawer()
-                    })
-                  }}
+                  className="invoice-add-line"
+                  onClick={() =>
+                    setForm((current) => ({
+                      ...current,
+                      lines: [...current.lines, { description: '', quantity: '1', rate: '' }],
+                    }))
+                  }
                 >
-                  Delete draft
+                  Add a line
                 </Button>
+              </div>
+            </section>
+
+            <section className="invoice-section invoice-section-tax">
+              <header className="invoice-section-head">
+                <div>
+                  <h3>VAT and company PIN</h3>
+                  <p>Locked onto this invoice when you save</p>
+                </div>
+              </header>
+              <label className="invoice-check">
+                <input type="checkbox" checked={form.vatEnabled} onChange={(event) => patch('vatEnabled', event.target.checked)} />
+                <span>Show VAT on this invoice</span>
+              </label>
+              <div className="invoice-grid">
+                <label>
+                  VAT rate (%)
+                  <input value={form.vatRate} onChange={(event) => patch('vatRate', event.target.value)} disabled={!form.vatEnabled} />
+                </label>
+                <label>
+                  Company PIN
+                  <input value={form.companyPin} onChange={(event) => patch('companyPin', event.target.value)} />
+                </label>
+              </div>
+              <div className="invoice-section-actions">
+                <Button type="button" variant="outline" onClick={useCurrentSettings}>
+                  Use current company settings
+                </Button>
+              </div>
+              <p className="invoice-note">Changing company settings later does not rewrite invoices you have already saved.</p>
+            </section>
+
+            <section className="invoice-section invoice-section-pay">
+              <header className="invoice-section-head">
+                <div>
+                  <h3>Ways to pay</h3>
+                  <p>Copied onto the invoice when you save</p>
+                </div>
+              </header>
+              {saved && saved.payments.some((payment) => !desk.paymentAccounts.some((account) => account.id === payment.id)) ? (
+                <p className="invoice-note invoice-note-warn">
+                  This invoice still has payment wording from an account that was removed. Saving drops that wording unless you add the account again first.
+                </p>
               ) : null}
+              {desk.paymentAccounts.length === 0 ? (
+                <p className="invoice-note">No bank or paybill details yet. Add them under VAT and payment details.</p>
+              ) : (
+                <div className="invoice-pay-list">
+                  {desk.paymentAccounts.map((account) => (
+                    <label key={account.id} className={`invoice-pay-option${form.paymentIds.includes(account.id) ? ' selected' : ''}`}>
+                      <input
+                        type="checkbox"
+                        checked={form.paymentIds.includes(account.id)}
+                        onChange={(event) =>
+                          patch(
+                            'paymentIds',
+                            event.target.checked ? [...form.paymentIds, account.id] : form.paymentIds.filter((id) => id !== account.id),
+                          )
+                        }
+                      />
+                      <span>
+                        <strong>{account.label}</strong>
+                        <em>
+                          {account.kind === 'paybill' ? 'Paybill' : account.kind === 'bank' ? 'Bank' : 'Other'}
+                          {account.active ? '' : ' · paused'}
+                        </em>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="invoice-section invoice-section-note">
+              <header className="invoice-section-head">
+                <div>
+                  <h3>Note</h3>
+                  <p>Optional message printed on the invoice</p>
+                </div>
+              </header>
+              <label className="invoice-span-label">
+                <span className="sr-only">Note on the invoice</span>
+                <textarea
+                  rows={3}
+                  value={form.notes}
+                  onChange={(event) => patch('notes', event.target.value)}
+                  placeholder="Thank you for your business."
+                />
+              </label>
+            </section>
+
+            <div className="invoice-summary">
+              <div className="invoice-summary-figures">
+                {totals ? (
+                  <>
+                    {form.vatEnabled ? (
+                      <>
+                        <div>
+                          <span>Subtotal</span>
+                          <strong>{formatMoney(totals.subtotalCents)}</strong>
+                        </div>
+                        <div>
+                          <span>VAT</span>
+                          <strong>{formatMoney(totals.vatCents)}</strong>
+                        </div>
+                      </>
+                    ) : null}
+                    <div className="invoice-summary-total">
+                      <span>Total</span>
+                      <strong>{formatMoney(totals.totalCents)}</strong>
+                    </div>
+                  </>
+                ) : (
+                  <p className="invoice-note">Add a description, quantity, and rate on each line to see the total.</p>
+                )}
+              </div>
+              <div className="invoice-summary-actions">
+                <Button type="submit" disabled={pending || saved?.status === 'void'}>
+                  {form.id ? 'Save invoice' : 'Save draft'}
+                </Button>
+                <Button type="button" variant="outline" disabled={pending} onClick={() => openInvoice(blankInvoice(desk))}>
+                  New invoice
+                </Button>
+                {saved?.status === 'draft' ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={pending}
+                    onClick={() => {
+                      if (!window.confirm('Delete this draft?')) return
+                      run(() => deleteInvoice(saved.id), 'Draft deleted.', () => {
+                        setForm(blankInvoice(desk))
+                        closeDrawer()
+                      })
+                    }}
+                  >
+                    Delete draft
+                  </Button>
+                ) : null}
+              </div>
+              {saved?.status === 'void' ? <p className="invoice-note">This invoice is void. Start a new invoice for a replacement.</p> : null}
             </div>
-            {saved?.status === 'void' ? <p className="field-hint">This invoice is void, so it stays as it was. Start a new invoice for a replacement.</p> : null}
 
             {saved ? (
-              <div className="invoice-send">
-                <h3>Send or download</h3>
-                <p>These use the saved invoice. Save first if you have just changed it. Downloads keep the Globecon letterhead on the page.</p>
-                <div className="row-actions">
+              <section className="invoice-section invoice-section-send">
+                <header className="invoice-section-head">
+                  <div>
+                    <h3>Send or download</h3>
+                    <p>Uses the saved invoice. Save first if you just changed it.</p>
+                  </div>
+                </header>
+                <div className="invoice-action-row">
                   <Button type="button" variant="outline" disabled={pending} onClick={() => openFile('print')}>
                     Print or save PDF
                   </Button>
@@ -608,11 +729,11 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
                   )}
                 </div>
                 {saved.status !== 'void' ? (
-                  <>
+                  <div className="invoice-mail-grid">
                     <div className="invoice-mail">
                       <strong>Send from Task Buddy</strong>
                       <p>
-                        Task Buddy emails the client from the shared company mailbox and attaches the invoice. You stay on this page, and you do not need Outlook open. The client receives a normal email.
+                        Emails the client from the company mailbox with the invoice attached.
                         {desk.mailReady ? '' : ' This mailbox is not set up on this workspace yet, so use Outlook until it is.'}
                       </p>
                       <Button type="button" disabled={pending || !desk.mailReady} onClick={() => run(() => emailInvoice(saved.id), 'Invoice emailed.')}>
@@ -620,26 +741,22 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
                       </Button>
                     </div>
                     <div className="invoice-mail">
-                      <strong>Open in Outlook, with the invoice attached</strong>
-                      <p>
-                        This downloads a message file. Open that file and Outlook fills in the client&apos;s address, the subject, a short message, and the invoice attachment. You check it and press Send yourself. Outlook needs to be the program that opens .eml files.
-                      </p>
+                      <strong>Outlook message file</strong>
+                      <p>Downloads a message with the address, subject, and invoice attached. Open it in Outlook and press Send.</p>
                       <Button type="button" variant="outline" disabled={pending} onClick={() => openOutlook('file')}>
                         Download Outlook message
                       </Button>
                     </div>
                     <div className="invoice-mail">
                       <strong>Open Outlook now</strong>
-                      <p>
-                        This opens Outlook straight away with the address, subject, and message already typed. A browser cannot attach the file this way, so download the invoice first and attach it before you press Send.
-                      </p>
+                      <p>Opens Outlook with the address and message filled in. Download the invoice first and attach it before you send.</p>
                       <Button type="button" variant="outline" disabled={pending} onClick={() => openOutlook('now')}>
                         Open Outlook now
                       </Button>
                     </div>
-                  </>
+                  </div>
                 ) : null}
-              </div>
+              </section>
             ) : null}
           </form>
         </OfficeDrawer>
