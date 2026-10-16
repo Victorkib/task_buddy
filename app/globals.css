@@ -790,6 +790,69 @@ html:has(.auth-shell) body { background: #020617; }
 }
 
 .project-workspace { display: grid; gap: 16px; }
+
+.project-identity { display: grid; gap: 14px; }
+.project-identity-main { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.project-identity h1 { margin: 4px 0 0; font-size: 28px; letter-spacing: -.04em; color: #1a2f6b; }
+.project-identity-meta { margin: 8px 0 0; color: var(--muted-foreground); font-size: 13px; max-width: 720px; }
+.project-health-strip {
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(120px, 1.2fr);
+  gap: 10px; align-items: center;
+}
+.project-health-strip > div:not(.progress-track) {
+  background: color-mix(in oklch, #1a2f6b 5%, var(--card));
+  border: 1px solid color-mix(in oklch, #1a2f6b 12%, var(--border));
+  border-radius: 12px; padding: 12px 14px;
+}
+.project-health-strip strong, .project-health-strip span { display: block; }
+.project-health-strip strong { font-size: 20px; letter-spacing: -.03em; color: #1a2f6b; }
+.project-health-strip span { margin-top: 3px; color: var(--muted-foreground); font-size: 11px; font-weight: 650; }
+.project-shell { display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 18px; align-items: start; }
+.project-rail { position: sticky; top: 12px; }
+.project-stage { min-width: 0; display: grid; gap: 16px; }
+.project-section {
+  display: grid; gap: 14px; padding: 18px; border: 1px solid var(--border); border-radius: 14px;
+  background: var(--card); border-left: 3px solid color-mix(in oklch, #1a2f6b 50%, var(--border));
+}
+.project-section-work { border-left-color: #2a4a8f; background: color-mix(in oklch, #2a4a8f 4%, var(--card)); }
+.project-section-overview { border-left-color: #1a2f6b; background: color-mix(in oklch, #1a2f6b 4%, var(--card)); }
+.project-section-people { border-left-color: #15803d; background: color-mix(in oklch, #15803d 4%, var(--card)); }
+.project-section-pulse { border-left-color: #475569; background: color-mix(in oklch, #64748b 4%, var(--card)); }
+.project-section-head h2 { margin: 0; font-size: 17px; letter-spacing: -.02em; color: #1a2f6b; }
+.project-section-head p { margin: 4px 0 0; font-size: 12px; color: var(--muted-foreground); }
+.project-overview-copy { margin: 0; font-size: 14px; line-height: 1.55; }
+.project-overview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.project-overview-grid > div { padding: 12px 14px; border-radius: 10px; background: var(--background); border: 1px solid var(--border); }
+.project-overview-grid span { display: block; font-size: 11px; font-weight: 700; color: var(--muted-foreground); }
+.project-overview-grid strong { display: block; margin-top: 4px; font-size: 14px; }
+.project-people-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.milestone-card {
+  padding: 14px; border: 1px solid color-mix(in oklch, #2a4a8f 14%, var(--border));
+  border-radius: 12px; background: color-mix(in oklch, #2a4a8f 3%, white); display: grid; gap: 10px;
+}
+.project-task-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card);
+}
+.project-task-row.is-overdue { border-color: color-mix(in oklch, oklch(.6 .14 55) 35%, var(--border)); background: oklch(.98 .02 70); }
+.project-task-main { border: 0; background: transparent; text-align: left; cursor: pointer; padding: 0; display: grid; gap: 2px; min-width: 0; }
+.project-task-main strong { font-size: 13px; letter-spacing: -.01em; }
+.project-task-main span { color: var(--muted-foreground); font-size: 12px; }
+.project-task-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.project-drawer-wide { width: min(100%, 720px); }
+@media (max-width: 1100px) {
+  .project-shell { grid-template-columns: 1fr; }
+  .project-rail { position: static; display: flex; gap: 8px; overflow-x: auto; padding: 0; }
+  .project-rail .office-rail-group { flex-direction: row; flex-wrap: wrap; border: 0; padding: 0; }
+  .project-health-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .project-people-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 720px) {
+  .project-health-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .project-task-row { grid-template-columns: 1fr; }
+  .project-overview-grid { grid-template-columns: 1fr; }
+}
+
 .project-workspace-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-top: 8px; }
 .project-workspace-heading h1 { margin: 4px 0 0; font-size: 28px; letter-spacing: -.04em; }
 .project-workspace-heading p { margin: 8px 0 0; color: var(--muted-foreground); font-size: 13px; max-width: 720px; }

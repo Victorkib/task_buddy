@@ -454,6 +454,22 @@ export async function createTask(formData: FormData) {
       entityType: 'task',
       entityId: task.id,
     })
+    const projectTitle = projectId
+      ? (await getDb().query.projects.findFirst({ where: eq(projects.id, projectId) }))?.title ?? null
+      : null
+    const { sendTaskAssignmentMail } = await import('@/lib/mail/task-notify')
+    await sendTaskAssignmentMail({
+      to: assignee?.email,
+      firstName: assignee?.firstName ?? 'there',
+      assignerName: fullName(currentUser),
+      taskTitle: title,
+      taskId: task.id,
+      projectTitle,
+      dueDate,
+      brief: description,
+      role: 'assignee',
+      companyName: company.name,
+    })
   }
 
   if (selfServe) {
@@ -1297,6 +1313,23 @@ export async function addTaskHelper(taskId: string, userId: string) {
       entityType: 'task',
       entityId: taskId,
     })
+    const company = await getCompany()
+    const projectTitle = task.projectId
+      ? (await getDb().query.projects.findFirst({ where: eq(projects.id, task.projectId) }))?.title ?? null
+      : null
+    const { sendTaskAssignmentMail } = await import('@/lib/mail/task-notify')
+    await sendTaskAssignmentMail({
+      to: person.email,
+      firstName: person.firstName,
+      assignerName: fullName(currentUser),
+      taskTitle: task.title,
+      taskId,
+      projectTitle,
+      dueDate: task.dueDate,
+      brief: task.description,
+      role: 'collaborator',
+      companyName: company?.name ?? 'Globecon Convergence Solutions',
+    })
   }
 
   refreshWorkhub()
@@ -1427,6 +1460,34 @@ export async function updateTaskDetails(input: {
       action: 'assignment_changed',
       summary: `reassigned ${title}`,
     })
+    if (input.assigneeId !== currentUser.id && nextAssignee) {
+      await getDb().insert(notifications).values({
+        companyId: task.companyId,
+        userId: input.assigneeId,
+        type: 'reminder',
+        title: 'Task assigned to you',
+        body: `${currentUser.firstName} ${currentUser.lastName} assigned you “${title}”.`,
+        entityType: 'task',
+        entityId: input.taskId,
+      })
+      const company = await getCompany()
+      const projectTitle = task.projectId
+        ? (await getDb().query.projects.findFirst({ where: eq(projects.id, task.projectId) }))?.title ?? null
+        : null
+      const { sendTaskAssignmentMail } = await import('@/lib/mail/task-notify')
+      await sendTaskAssignmentMail({
+        to: nextAssignee.email,
+        firstName: nextAssignee.firstName,
+        assignerName: fullName(currentUser),
+        taskTitle: title,
+        taskId: input.taskId,
+        projectTitle,
+        dueDate: nextDueDate,
+        brief: nextDescription,
+        role: 'assignee',
+        companyName: company?.name ?? 'Globecon Convergence Solutions',
+      })
+    }
   }
 
   if (changedFields) {
@@ -3219,3 +3280,157 @@ export async function updateUserPlacement(formData: FormData) {
   return { ok: true }
 }
 
+
+export async function notifyProjectPeople(input: {
+  projectId: string
+  mode: 'reminder' | 'progress'
+  audience: 'all' | 'assignees' | 'helpers' | 'selected'
+  userIds?: string[]
+  note?: string
+}) {
+  const currentUser = await getCurrentUser()
+  if (!currentUser) return { error: 'Not signed in.' }
+
+  const loaded = await loadProjectAccess(input.projectId)
+  if (!loaded) return { error: 'Project not found.' }
+  if (!canManageProject(currentUser, loaded.access)) {
+    return denied('Only the project lead or home department lead can notify people on this project.')
+  }
+
+  const projectTasks = await getDb().query.tasks.findMany({
+    where: eq(tasks.projectId, input.projectId),
+    with: { helpers: true },
+  })
+
+  const helperUserIds = new Set<string>()
+  const assigneeIds = new Set<string>()
+  for (const task of projectTasks) {
+    if (task.assigneeId) assigneeIds.add(task.assigneeId)
+    for (const helper of task.helpers ?? []) helperUserIds.add(helper.userId)
+  }
+  const teamIds = new Set(loaded.access.teamUserIds ?? [])
+  if (loaded.access.ownerId) teamIds.add(loaded.access.ownerId)
+  if (loaded.project.partnerId) teamIds.add(loaded.project.partnerId)
+
+  let recipientIds: string[] = []
+  if (input.audience === 'assignees') recipientIds = [...assigneeIds]
+  else if (input.audience === 'helpers') recipientIds = [...helperUserIds]
+  else if (input.audience === 'selected') {
+    const allowed = new Set([...assigneeIds, ...helperUserIds, ...teamIds])
+    recipientIds = (input.userIds ?? []).filter((id) => allowed.has(id))
+  } else {
+    recipientIds = [...new Set([...assigneeIds, ...helperUserIds, ...teamIds])]
+  }
+
+  recipientIds = recipientIds.filter((id) => id !== currentUser.id)
+  if (recipientIds.length === 0) return { error: 'Choose at least one person on this project to notify.' }
+
+  const note =
+    input.note?.trim() ||
+    (input.mode === 'progress'
+      ? `Please share a short progress update on “${loaded.project.title}”.`
+      : `Reminder of your work on “${loaded.project.title}”.`)
+
+  const company = await getCompany()
+  const {
+    dueDateMailLabel,
+    isMailConfigured,
+    projectMailUrl,
+    projectProgressRequestEmail,
+    sendTaskAssignmentMail,
+    trySendMail,
+  } = await import('@/lib/mail/task-notify')
+
+  let mailed = 0
+  let notified = 0
+  for (const userId of recipientIds) {
+    const person = await getUserById(userId)
+    if (!person) continue
+
+    const theirTasks = projectTasks.filter(
+      (task) => task.assigneeId === userId || (task.helpers ?? []).some((helper) => helper.userId === userId),
+    )
+
+    await getDb().insert(notifications).values({
+      companyId: loaded.project.companyId,
+      userId,
+      type: 'reminder',
+      title: input.mode === 'progress' ? 'Progress update requested' : 'Project work reminder',
+      body: `${currentUser.firstName} ${currentUser.lastName}: ${note}`,
+      entityType: 'project',
+      entityId: input.projectId,
+    })
+    notified += 1
+
+    if (input.mode === 'progress') {
+      const sent = await trySendMail(
+        person.email,
+        projectProgressRequestEmail({
+          firstName: person.firstName,
+          requesterName: fullName(currentUser),
+          projectTitle: loaded.project.title,
+          note,
+          items: theirTasks.map((task) => ({
+            title: task.title,
+            dueDateLabel: dueDateMailLabel(task.dueDate),
+            role: task.assigneeId === userId ? 'Lead' : 'Collaborator',
+          })),
+          projectUrl: projectMailUrl(input.projectId),
+          companyName: company?.name ?? 'Globecon Convergence Solutions',
+        }),
+      )
+      if (sent) mailed += 1
+    } else {
+      for (const task of theirTasks) {
+        const sent = await sendTaskAssignmentMail({
+          to: person.email,
+          firstName: person.firstName,
+          assignerName: fullName(currentUser),
+          taskTitle: task.title,
+          taskId: task.id,
+          projectTitle: loaded.project.title,
+          dueDate: task.dueDate,
+          brief: note,
+          role: task.assigneeId === userId ? 'assignee' : 'collaborator',
+          companyName: company?.name ?? 'Globecon Convergence Solutions',
+        })
+        if (sent) mailed += 1
+      }
+      if (theirTasks.length === 0) {
+        const sent = await trySendMail(
+          person.email,
+          projectProgressRequestEmail({
+            firstName: person.firstName,
+            requesterName: fullName(currentUser),
+            projectTitle: loaded.project.title,
+            note,
+            items: [],
+            projectUrl: projectMailUrl(input.projectId),
+            companyName: company?.name ?? 'Globecon Convergence Solutions',
+          }),
+        )
+        if (sent) mailed += 1
+      }
+    }
+  }
+
+  await getDb().insert(activityEvents).values({
+    companyId: loaded.project.companyId,
+    actorId: currentUser.id,
+    entityType: 'project',
+    entityId: input.projectId,
+    action: 'people_notified',
+    summary:
+      input.mode === 'progress'
+        ? `requested progress from ${notified} ${notified === 1 ? 'person' : 'people'}`
+        : `sent a work reminder to ${notified} ${notified === 1 ? 'person' : 'people'}`,
+  })
+
+  refreshWorkhub()
+  return {
+    ok: true as const,
+    notified,
+    mailed,
+    mailReady: isMailConfigured(),
+  }
+}

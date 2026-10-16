@@ -245,3 +245,125 @@ export function officeNoticeEmail(input: { firstName: string; title: string; bod
   })
   return { subject: input.title, html, text }
 }
+
+
+export function taskAssignedEmail(input: {
+  firstName: string
+  assignerName: string
+  taskTitle: string
+  projectTitle?: string | null
+  dueDateLabel?: string | null
+  brief?: string | null
+  role: 'assignee' | 'collaborator'
+  taskUrl: string
+  companyName: string
+}) {
+  const roleLine =
+    input.role === 'collaborator'
+      ? `${input.assignerName} added you as a collaborator on “${input.taskTitle}”.`
+      : `${input.assignerName} assigned you “${input.taskTitle}”.`
+  const projectLine = input.projectTitle ? `Project: ${input.projectTitle}` : null
+  const dueLine = input.dueDateLabel ? `Due: ${input.dueDateLabel}` : null
+  const subject =
+    input.role === 'collaborator'
+      ? `Collaborating on: ${input.taskTitle}`
+      : `Task assigned: ${input.taskTitle}`
+  const text = [
+    `Hi ${input.firstName},`,
+    '',
+    roleLine,
+    projectLine,
+    dueLine,
+    input.brief ? '' : null,
+    input.brief || null,
+    '',
+    `Open the task: ${input.taskUrl}`,
+  ]
+    .filter((line) => line != null)
+    .join('\n')
+
+  const metaBits = [
+    input.projectTitle
+      ? `<div style="margin:0 0 8px;font-size:13px;color:#6b7a90;"><strong style="color:#1a2740;">Project</strong> · ${escapeHtml(input.projectTitle)}</div>`
+      : '',
+    input.dueDateLabel
+      ? `<div style="margin:0 0 8px;font-size:13px;color:#6b7a90;"><strong style="color:#1a2740;">Due</strong> · ${escapeHtml(input.dueDateLabel)}</div>`
+      : '',
+  ].join('')
+
+  const briefHtml = input.brief?.trim()
+    ? `<div style="margin:14px 0 18px;padding:16px 18px;border-radius:12px;background:#f5f8fc;border:1px solid #d5dee9;font-size:14px;line-height:1.55;white-space:pre-wrap;">${escapeHtml(input.brief.trim())}</div>`
+    : ''
+
+  const html = layout({
+    title: input.role === 'collaborator' ? 'You are collaborating' : 'New task for you',
+    preheader: roleLine,
+    bodyHtml: `
+      <p style="margin:0 0 14px;font-size:15px;line-height:1.55;">Hi ${escapeHtml(input.firstName)},</p>
+      <p style="margin:0 0 16px;font-size:15px;line-height:1.55;">${escapeHtml(roleLine)}</p>
+      <div style="margin:0 0 10px;padding:10px 14px;border-radius:999px;background:#eef2fb;border:1px solid #c9d4ea;display:inline-block;font-size:12px;font-weight:700;color:#1a2f6b;">
+        Task · ${escapeHtml(input.taskTitle)}
+      </div>
+      ${metaBits}
+      ${briefHtml}
+      ${ctaButton(input.taskUrl, `Open task in ${PRODUCT_NAME}`)}
+    `,
+  })
+
+  return { subject, html, text }
+}
+
+export function projectProgressRequestEmail(input: {
+  firstName: string
+  requesterName: string
+  projectTitle: string
+  note: string
+  items: Array<{ title: string; dueDateLabel?: string | null; role: string }>
+  projectUrl: string
+  companyName: string
+}) {
+  const subject = `Progress update requested: ${input.projectTitle}`
+  const itemLines = input.items
+    .map((item) => `- ${item.title}${item.dueDateLabel ? ` (due ${item.dueDateLabel})` : ''} · ${item.role}`)
+    .join('\n')
+  const text = [
+    `Hi ${input.firstName},`,
+    '',
+    `${input.requesterName} asked for a progress update on “${input.projectTitle}” in ${input.companyName}.`,
+    '',
+    input.note,
+    '',
+    'Your work on this project:',
+    itemLines || '- (see the project in Task Buddy)',
+    '',
+    `Open the project: ${input.projectUrl}`,
+  ].join('\n')
+
+  const itemsHtml = input.items.length
+    ? `<ul style="margin:12px 0 18px;padding-left:18px;font-size:14px;line-height:1.55;color:#1a2740;">${input.items
+        .map(
+          (item) =>
+            `<li style="margin:0 0 6px;"><strong>${escapeHtml(item.title)}</strong>${
+              item.dueDateLabel ? ` · due ${escapeHtml(item.dueDateLabel)}` : ''
+            } · ${escapeHtml(item.role)}</li>`,
+        )
+        .join('')}</ul>`
+    : ''
+
+  const html = layout({
+    title: 'Progress update requested',
+    preheader: `${input.requesterName} asked for an update on ${input.projectTitle}.`,
+    bodyHtml: `
+      <p style="margin:0 0 14px;font-size:15px;line-height:1.55;">Hi ${escapeHtml(input.firstName)},</p>
+      <p style="margin:0 0 14px;font-size:15px;line-height:1.55;">
+        <strong>${escapeHtml(input.requesterName)}</strong> asked for a progress update on
+        <strong>${escapeHtml(input.projectTitle)}</strong>.
+      </p>
+      <div style="margin:14px 0 16px;padding:16px 18px;border-radius:12px;background:#f5f8fc;border:1px solid #d5dee9;font-size:14px;line-height:1.55;white-space:pre-wrap;">${escapeHtml(input.note)}</div>
+      ${itemsHtml}
+      ${ctaButton(input.projectUrl, `Open project in ${PRODUCT_NAME}`)}
+    `,
+  })
+
+  return { subject, html, text }
+}

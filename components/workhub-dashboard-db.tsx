@@ -908,6 +908,14 @@ export default function WorkhubDashboardDB({
   }, [])
 
   useEffect(() => {
+    if (searchParams.get('notify') !== '1' || !selectedProjectId) return
+    const params = new URLSearchParams(searchParams.toString())
+    params.delete('notify')
+    const next = params.toString()
+    router.replace(next ? `/?${next}` : '/', { scroll: false })
+  }, [searchParams, selectedProjectId, router])
+
+  useEffect(() => {
     const deepTaskId = searchParams.get('task')
     if (!deepTaskId) return
     const match =
@@ -3057,14 +3065,21 @@ export default function WorkhubDashboardDB({
               tasks={tasks.map((task) => ({
                 id: task.id,
                 title: task.title,
+                description: task.description,
                 status: task.status,
+                priority: task.priority,
                 dueDate: task.dueDate,
+                startDate: task.startDate,
+                assigneeId: task.assigneeId,
                 assignee: task.assignee,
                 projectId: task.projectId,
+                helpers: (task.helpers ?? []).filter((helper): helper is typeof helper & { id: string } => Boolean(helper.id)),
               }))}
               canManage={canManageSelectedProject}
               canCreateWork={canCreateWork}
               lockLeadToSelf={isMemberCreator}
+              openNotifyOnMount={searchParams.get('notify') === '1'}
+              onRefresh={() => router.refresh()}
               onBack={() => nav('Projects')}
               onCreateTask={(milestoneId) => {
                 setCreateTaskMilestoneId(milestoneId)
@@ -3694,8 +3709,13 @@ export default function WorkhubDashboardDB({
           lockLeadToSelf={isMemberCreator}
           onClose={(projectId) => {
             setShowCreateProject(false)
-            if (projectId) nav('Projects', { project: projectId })
-            else router.refresh()
+            if (projectId) {
+              const params = new URLSearchParams()
+              params.set('view', 'Projects')
+              params.set('project', projectId)
+              params.set('notify', '1')
+              router.push(`/?${params.toString()}`, { scroll: false })
+            } else router.refresh()
           }}
         />
       )}
