@@ -232,6 +232,64 @@ export function taskReportEmail(input: {
   return { subject, html, text }
 }
 
+export function taskProgressNoticeEmail(input: {
+  recipientFirstName: string
+  authorName: string
+  taskTitle: string
+  projectTitle?: string | null
+  subject: string
+  body: string
+  taskUrl: string
+  companyName: string
+}) {
+  const preview = input.body.replace(/\s+/g, ' ').trim().slice(0, 140)
+  const projectLine = input.projectTitle ? `Project: ${input.projectTitle}` : null
+  const text = [
+    `Hi ${input.recipientFirstName},`,
+    '',
+    `${input.authorName} sent a progress update on “${input.taskTitle}” in ${PRODUCT_NAME}.`,
+    projectLine,
+    '',
+    input.subject,
+    '',
+    input.body,
+    '',
+    `Open the task: ${input.taskUrl}`,
+  ]
+    .filter((line) => line != null)
+    .join('\n')
+
+  const bodyHtml = input.body
+    .split(/\n{2,}/)
+    .map((paragraph) => `<p style="margin:0 0 12px;font-size:15px;line-height:1.6;white-space:pre-wrap;">${escapeHtml(paragraph.trim())}</p>`)
+    .join('')
+
+  const html = layout({
+    title: input.subject,
+    preheader: preview || `${input.authorName} shared a progress update on ${input.taskTitle}.`,
+    bodyHtml: `
+      <p style="margin:0 0 14px;font-size:15px;line-height:1.55;">Hi ${escapeHtml(input.recipientFirstName)},</p>
+      <p style="margin:0 0 16px;font-size:15px;line-height:1.55;">
+        <strong>${escapeHtml(input.authorName)}</strong> shared a progress update on
+        <strong>${escapeHtml(input.taskTitle)}</strong> for ${escapeHtml(input.companyName)}.
+      </p>
+      ${
+        input.projectTitle
+          ? `<div style="margin:0 0 10px;font-size:13px;color:#6b7a90;"><strong style="color:#1a2740;">Project</strong> · ${escapeHtml(input.projectTitle)}</div>`
+          : ''
+      }
+      <div style="margin:14px 0 18px;padding:18px 20px;border-radius:14px;background:linear-gradient(180deg,#f8fbfd 0%,#f3f7fb 100%);border:1px solid #d5dee9;box-shadow:inset 0 1px 0 #ffffff;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#6b7a90;margin-bottom:6px;">${escapeHtml(input.subject)}</div>
+        <div style="font-size:13px;color:#6b7a90;margin-bottom:12px;">From ${escapeHtml(input.authorName)} · ${escapeHtml(PRODUCT_NAME)}</div>
+        ${bodyHtml}
+      </div>
+      ${ctaButton(input.taskUrl, `Open task in ${PRODUCT_NAME}`)}
+    `,
+  })
+
+  return { subject: input.subject, html, text }
+}
+
 export function officeNoticeEmail(input: { firstName: string; title: string; body: string; href: string; cta: string }) {
   const text = `Hi ${input.firstName},\n\n${input.body}\n\n${input.cta}: ${input.href}`
   const html = layout({

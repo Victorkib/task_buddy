@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useState, type Dispatch, SetStateAction } from 'react'
 import { Download, FileText, GitBranch, ListChecks, Loader2, Mail, MessageSquare, Paperclip, X } from 'lucide-react'
-import { createTaskReport } from '@/app/actions'
+import { createTaskReport, sendTaskProgressNotice } from '@/app/actions'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { CategoryField } from '@/components/category-field'
+import { MediaViewer } from '@/components/media-viewer'
 import { StatusBadge } from '@/components/status-badge'
 import { FileDropzone, AttachmentRow } from '@/components/uploads/file-dropzone'
 import { UserAvatar } from '@/components/user-avatar'
@@ -13,6 +14,7 @@ import type { TaskProjectOption } from '@/components/create-task-dialog'
 import { TASK_PRIORITY_LABELS, TASK_STATUS_LABELS } from '@/lib/constants'
 import { taskCategoryEnum, taskStatusEnum } from '@/lib/db/schema'
 import { categoryLabel, formatDue, formatRelative, fullName, toDateInputValue } from '@/lib/format'
+import { classifyMedia, type MediaItem } from '@/lib/media-kind'
 import type { LinkedTaskView, TaskCollaborator } from '@/lib/task-collaboration'
 import type { Person } from '@/lib/types'
 import type { UploadedFile } from '@/lib/uploads/client'
@@ -118,6 +120,52 @@ function downloadTextFile(filename: string, content: string, mimeType: string) {
 
 function slugFilePart(value: string) {
   return value.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').slice(0, 48) || 'report'
+}
+
+function suggestProgressEmail(task: {
+  title: string
+  status: string
+  progress?: number
+  projectTitle?: string | null
+  description?: string | null
+}) {
+  const status = task.status
+  const progress = task.progress ?? 0
+  const projectBit = task.projectTitle ? ` on ${task.projectTitle}` : ''
+  let subject = `Update: ${task.title}`
+  let body = `Hi,\n\nI wanted to share a quick update on “${task.title}”${projectBit}.\n\n`
+
+  if (status === 'completed' || progress >= 100) {
+    subject = `Completed: ${task.title}`
+    body += `I’ve finished this task and it’s ready for your review.\n\n`
+  } else if (status === 'blocked') {
+    subject = `Blocked: ${task.title}`
+    body += `I’m currently blocked and need help to move forward.\n\nWhat I’m waiting on:\n- \n\n`
+  } else if (status === 'waiting' || status === 'pending_approval') {
+    subject = `Waiting on feedback: ${task.title}`
+    body += `I’ve reached a checkpoint and would appreciate your feedback before I continue.\n\nCurrent progress: ${progress}%.\n\n`
+  } else if (status === 'in_progress') {
+    subject = `Progress (${progress}%): ${task.title}`
+    body += `I’ve made progress and wanted to keep you in the loop.\n\nCurrent progress: ${progress}%.\nWhat’s done:\n- \n\nWhat’s next:\n- \n\n`
+  } else {
+    body += `Status: ${TASK_STATUS_LABELS[status as TaskStatus] ?? status} · ${progress}% complete.\n\n`
+  }
+
+  if (task.description?.trim()) {
+    body += `Context from the task brief:\n${task.description.trim().slice(0, 280)}\n\n`
+  }
+  body += `Thanks`
+  return { subject, body }
+}
+
+type ProjectDocRef = {
+  id: string
+  label: string
+  url: string
+  bytes?: number | null
+  mimeType?: string | null
+  originalName?: string | null
+  comments?: Array<{ id: string; body: string }>
 }
 
 function downloadReportTxt(report: TaskReportEntry, taskTitle: string) {
@@ -401,6 +449,7 @@ export function TaskDetailSheet({
   currentUserDepartmentId = '',
   onSetPlacement,
   onReportsChange,
+  projectDocuments = [],
 }: {
   task: DetailTask
   people: Person[]
@@ -473,6 +522,7 @@ export function TaskDetailSheet({
   currentUserDepartmentId?: string
   onSetPlacement?: (input: TaskPlacementInput) => Promise<TaskPlacementResult>
   onReportsChange?: (reports: TaskReportEntry[]) => void
+  projectDocuments?: ProjectDocRef[]
 }) {
   const [confirm, setConfirm] = useState<
     | { kind: 'task' }
@@ -498,6 +548,91 @@ export function TaskDetailSheet({
   const [reportSaved, setReportSaved] = useState<string | null>(null)
   const [localReports, setLocalReports] = useState<TaskReport[]>(task.reports ?? [])
   const [helperToAdd, setHelperToAdd] = useState('')
+  const [progressMailOpen, setProgressMailOpen] = useState(false)
+  const [progressSubject, setProgressSubject] = useState('')
+  const [progressBody, setProgressBody] = useState('')
+  const [progressRecipients, setProgressRecipients] = useState<string[]>([])
+  const [progressMailError, setProgressMailError] = useState<string | null>(null)
+  const [progressMailSaving, setProgressMailSaving] = useState(false)
+  const [progressMailNotice, setProgressMailNotice] = useState<string | null>(null)
+  const [viewerItem, setViewerItem] = useState<MediaItem | null>(null)
+
+  const progressRecipientOptions = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; role: string; priority: number }>()
+    const taskDeptId = task.department?.id
+    for (const person of people) {
+      if (person.id === currentUserId) continue
+      const onTeam = Boolean(task.projectTeamUserIds?.includes(person.id))
+      const isHelper = Boolean(task.helpers?.some((helper) => helper.id === person.id))
+      const isAssignee = task.assigneeId === person.id
+      const sameDept = Boolean(taskDeptId && personDepartmentId(person) === taskDeptId)
+      if (!onTeam && !isHelper && !isAssignee && !sameDept) continue
+      let role = 'Same department'
+      let priority = 2
+      if (isAssignee) {
+        role = 'Assignee'
+        priority = 0
+      } else if (isHelper) {
+        role = 'Collaborator'
+        priority = 1
+      } else if (onTeam) {
+        role = 'Project team'
+        priority = 1
+      }
+      map.set(person.id, {
+        id: person.id,
+        name: `${person.firstName} ${person.lastName}`,
+        role,
+        priority,
+      })
+    }
+    return [...map.values()].sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name))
+  }, [people, currentUserId, task.projectTeamUserIds, task.helpers, task.assigneeId, task.department?.id])
+
+  function openProgressMail() {
+    const suggestion = suggestProgressEmail(task)
+    const me = people.find((person) => person.id === currentUserId)
+    const signOff = me ? `\n\n${me.firstName} ${me.lastName}` : ''
+    setProgressSubject(suggestion.subject)
+    setProgressBody(`${suggestion.body}${signOff}`)
+    setProgressRecipients(
+      progressRecipientOptions
+        .filter((person) => person.priority <= 1)
+        .slice(0, 4)
+        .map((person) => person.id),
+    )
+    setProgressMailError(null)
+    setProgressMailNotice(null)
+    setProgressMailOpen(true)
+  }
+
+  async function confirmProgressMail() {
+    setProgressMailSaving(true)
+    setProgressMailError(null)
+    setProgressMailNotice(null)
+    try {
+      const result = await sendTaskProgressNotice({
+        taskId: task.id,
+        recipientIds: progressRecipients,
+        subject: progressSubject,
+        body: progressBody,
+      })
+      if ('error' in result && result.error) {
+        setProgressMailError(result.error)
+        return
+      }
+      if ('ok' in result && result.ok) {
+        setProgressMailNotice(
+          `Sent to ${result.sent} recipient${result.sent === 1 ? '' : 's'}${
+            result.failed ? ` (${result.failed} failed)` : ''
+          }.`,
+        )
+        setProgressMailOpen(false)
+      }
+    } finally {
+      setProgressMailSaving(false)
+    }
+  }
   const attachmentCount = task.attachments?.length ?? 0
   const commentCount = task.comments?.length ?? 0
   const deliverableCount = task.deliverables?.length ?? 0
@@ -760,6 +895,21 @@ export function TaskDetailSheet({
                     </div>
                   </label>
                 </div>
+                {canProgress ? (
+                  <div className="td-progress-mail">
+                    <Button
+                      type="button"
+                      className="create-button"
+                      disabled={isPending || progressMailSaving}
+                      onClick={openProgressMail}
+                    >
+                      <Mail aria-hidden="true" />
+                      Email progress update
+                    </Button>
+                    <p className="td-muted">Draft a notification, confirm the recipients and copy, then send.</p>
+                    {progressMailNotice ? <p className="form-ok">{progressMailNotice}</p> : null}
+                  </div>
+                ) : null}
               </div>
               <aside className="td-aside">
                 <label className="form-field">
@@ -989,6 +1139,49 @@ export function TaskDetailSheet({
 
           {detailTab === 'files' ? (
             <section className="td-section">
+              {projectDocuments.length > 0 ? (
+                <div className="td-project-docs">
+                  <header className="td-section-head">
+                    <h3>Project documents</h3>
+                    <p>Shared reference files from {task.projectTitle ?? 'this project'} — available to every linked task.</p>
+                  </header>
+                  <div className="td-stack">
+                    {projectDocuments.map((doc) => (
+                      <div key={doc.id} className="td-project-doc-row">
+                        <AttachmentRow
+                          label={doc.originalName || doc.label}
+                          url={doc.url}
+                          bytes={doc.bytes}
+                        />
+                        <button
+                          type="button"
+                          className="filter-pill"
+                          onClick={() =>
+                            setViewerItem({
+                              id: doc.id,
+                              title: doc.label,
+                              url: doc.url,
+                              kind: classifyMedia({
+                                url: doc.url,
+                                mimeType: doc.mimeType,
+                                label: doc.label,
+                                originalName: doc.originalName,
+                              }),
+                              mimeType: doc.mimeType,
+                              sourceLabel: 'Project document',
+                            })
+                          }
+                        >
+                          Preview
+                        </button>
+                        {doc.comments && doc.comments.length > 0 ? (
+                          <span className="td-muted">{doc.comments.length} note{doc.comments.length === 1 ? '' : 's'}</span>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               <header className="td-section-head">
                 <h3>Attachments</h3>
                 <p>Store specs, screenshots, and working files on this task.</p>
@@ -1525,6 +1718,82 @@ export function TaskDetailSheet({
           }}
         />
       ) : null}
+      {progressMailOpen ? (
+        <ConfirmDialog
+          title="Confirm progress email"
+          description="Review the suggested copy, choose who should receive it, then send. Nothing is emailed until you confirm."
+          confirmLabel="Send email"
+          pending={progressMailSaving}
+          destructive={false}
+          onCancel={() => setProgressMailOpen(false)}
+          onConfirm={() => void confirmProgressMail()}
+        >
+          <div className="td-progress-mail-form">
+            <fieldset className="td-progress-recipients">
+              <legend>Send to</legend>
+              {progressRecipientOptions.length === 0 ? (
+                <p className="td-muted">No project teammates available yet. Add people to the project first.</p>
+              ) : (
+                progressRecipientOptions.map((person) => {
+                  const checked = progressRecipients.includes(person.id)
+                  return (
+                    <label key={person.id} className="td-progress-recipient">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={progressMailSaving}
+                        onChange={() =>
+                          setProgressRecipients((current) =>
+                            checked ? current.filter((id) => id !== person.id) : [...current, person.id],
+                          )
+                        }
+                      />
+                      <span>
+                        <strong>{person.name}</strong>
+                        <em>{person.role}</em>
+                      </span>
+                    </label>
+                  )
+                })
+              )}
+            </fieldset>
+            <label className="form-field">
+              <span>Subject</span>
+              <input
+                value={progressSubject}
+                onChange={(event) => setProgressSubject(event.target.value)}
+                disabled={progressMailSaving}
+              />
+            </label>
+            <label className="form-field">
+              <span>Message</span>
+              <textarea
+                value={progressBody}
+                onChange={(event) => setProgressBody(event.target.value)}
+                rows={8}
+                disabled={progressMailSaving}
+              />
+            </label>
+            <button
+              type="button"
+              className="filter-pill"
+              disabled={progressMailSaving}
+              onClick={() => {
+                const suggestion = suggestProgressEmail(task)
+                const me = people.find((person) => person.id === currentUserId)
+                setProgressSubject(suggestion.subject)
+                setProgressBody(
+                  `${suggestion.body}${me ? `\n\n${me.firstName} ${me.lastName}` : ''}`,
+                )
+              }}
+            >
+              Reset to suggestion
+            </button>
+            {progressMailError ? <p className="form-error">{progressMailError}</p> : null}
+          </div>
+        </ConfirmDialog>
+      ) : null}
+      {viewerItem ? <MediaViewer item={viewerItem} onClose={() => setViewerItem(null)} /> : null}
     </div>
   )
 }

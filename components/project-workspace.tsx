@@ -4,10 +4,13 @@ import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactN
 import { Plus, X } from 'lucide-react'
 import {
   addProjectDepartment,
+  addProjectDocument,
+  addProjectDocumentComment,
   addProjectMilestone,
   addProjectTeamMember,
   addTaskHelper,
   deleteProject,
+  deleteProjectDocument,
   deleteProjectMilestone,
   deleteTask,
   notifyProjectPeople,
@@ -21,12 +24,16 @@ import {
   updateTaskDetails,
 } from '@/app/actions'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { MediaViewer } from '@/components/media-viewer'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
+import { FileDropzone, AttachmentRow } from '@/components/uploads/file-dropzone'
 import { UserAvatar } from '@/components/user-avatar'
 import { TASK_STATUS_LABELS } from '@/lib/constants'
 import { formatDue, formatRelative, ledBy } from '@/lib/format'
+import { classifyMedia, type MediaItem } from '@/lib/media-kind'
 import type { Person } from '@/lib/types'
+import type { UploadedFile } from '@/lib/uploads/client'
 
 type Milestone = {
   id: string
@@ -43,6 +50,27 @@ type ProjectActivity = {
   summary: string
   createdAt: string | Date
   actor?: { initials: string; firstName: string; lastName: string; avatarUrl?: string | null; avatarColor?: string | null } | null
+}
+
+type ProjectDocumentComment = {
+  id: string
+  body: string
+  createdAt: string | Date
+  userId?: string | null
+  user?: { initials: string; firstName: string; lastName: string; avatarUrl?: string | null; avatarColor?: string | null } | null
+}
+
+type ProjectDocument = {
+  id: string
+  label: string
+  url: string
+  bytes?: number | null
+  mimeType?: string | null
+  originalName?: string | null
+  userId?: string | null
+  createdAt?: string | Date
+  uploader?: { id?: string; firstName: string; lastName: string; initials: string; avatarUrl?: string | null; avatarColor?: string | null } | null
+  comments?: ProjectDocumentComment[]
 }
 
 type Project = {
@@ -71,6 +99,7 @@ type Project = {
   milestones?: Milestone[]
   team?: Array<{ id: string; firstName: string; lastName: string; initials: string; avatarUrl?: string | null; avatarColor?: string | null }>
   activity?: ProjectActivity[]
+  documents?: ProjectDocument[]
 }
 
 type TaskHelper = {
@@ -94,11 +123,25 @@ type WorkspaceTask = {
   assignee: { firstName: string; lastName: string; initials?: string; avatarUrl?: string | null; avatarColor?: string | null } | null
   projectId?: string | null
   helpers?: TaskHelper[]
+  attachments?: Array<{
+    id: string
+    label: string
+    url: string
+    bytes?: number | null
+    mimeType?: string | null
+    originalName?: string | null
+  }>
+  deliverables?: Array<{
+    id: string
+    title: string
+    evidenceUrl?: string | null
+    evidenceOriginalName?: string | null
+  }>
 }
 
 type DepartmentOption = { id: string; name: string }
 
-type Focus = 'overview' | 'work' | 'people' | 'pulse'
+type Focus = 'overview' | 'work' | 'people' | 'pulse' | 'docs' | 'media'
 type DrawerKind = 'edit' | 'notify' | 'task' | null
 
 type ConfirmState =
@@ -216,6 +259,8 @@ export function ProjectWorkspace({
   tasks,
   canManage,
   canCreateWork,
+  canUploadDocs = false,
+  currentUserId,
   lockLeadToSelf = false,
   openNotifyOnMount = false,
   onBack,
@@ -226,6 +271,7 @@ export function ProjectWorkspace({
   canDeleteLinkedTask,
   onTaskLinked,
   onRefresh,
+  onDocumentsChange,
 }: {
   project: Project
   people: Person[]
@@ -233,6 +279,8 @@ export function ProjectWorkspace({
   tasks: WorkspaceTask[]
   canManage: boolean
   canCreateWork: boolean
+  canUploadDocs?: boolean
+  currentUserId?: string
   lockLeadToSelf?: boolean
   openNotifyOnMount?: boolean
   onBack: () => void
@@ -243,6 +291,7 @@ export function ProjectWorkspace({
   canDeleteLinkedTask: (taskId: string) => boolean
   onTaskLinked?: (taskId: string, placement: { projectId: string; milestoneId: string | null }) => void
   onRefresh?: () => void
+  onDocumentsChange?: (documents: ProjectDocument[]) => void
 }) {
   const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
@@ -269,6 +318,14 @@ export function ProjectWorkspace({
   const [notifyAudience, setNotifyAudience] = useState<'all' | 'assignees' | 'helpers' | 'selected'>('all')
   const [notifyNote, setNotifyNote] = useState('')
   const [notifySelected, setNotifySelected] = useState<string[]>([])
+  const [documents, setDocuments] = useState<ProjectDocument[]>(project.documents ?? [])
+  const [selectedDocId, setSelectedDocId] = useState<string | null>(null)
+  const [docComment, setDocComment] = useState('')
+  const [docLinkLabel, setDocLinkLabel] = useState('')
+  const [docLinkUrl, setDocLinkUrl] = useState('')
+  const [deletingDocId, setDeletingDocId] = useState<string | null>(null)
+  const [viewerItem, setViewerItem] = useState<MediaItem | null>(null)
+  const [mediaFilter, setMediaFilter] = useState<'all' | 'image' | 'pdf' | 'link' | 'file'>('all')
 
   useEffect(() => {
     setTitle(project.title)
@@ -277,6 +334,10 @@ export function ProjectWorkspace({
     setOwnerId(project.ownerId ?? '')
     setPartnerId(project.partnerId ?? '')
     setDepartmentId(project.departmentId ?? '')
+    setDocuments(project.documents ?? [])
+    setSelectedDocId((current) =>
+      (project.documents ?? []).some((doc) => doc.id === current) ? current : (project.documents?.[0]?.id ?? null),
+    )
     setLinkMilestoneId((current) =>
       project.milestones?.some((milestone) => milestone.id === current)
         ? current
@@ -297,6 +358,158 @@ export function ProjectWorkspace({
   const teamIds = new Set((project.team ?? []).map((member) => member.id))
   const addablePeople = people.filter((person) => !teamIds.has(person.id))
   const contributingIds = new Set((project.contributingDepartments ?? []).map((entry) => entry.id))
+  const allowDocs = canUploadDocs || canManage
+  const selectedDoc = documents.find((doc) => doc.id === selectedDocId) ?? documents[0] ?? null
+
+  const houseMedia = useMemo(() => {
+    const taskIdSet = new Set(project.taskIds ?? [])
+    const items: MediaItem[] = []
+    for (const doc of documents) {
+      items.push({
+        id: `project-doc-${doc.id}`,
+        title: doc.label,
+        url: doc.url,
+        kind: classifyMedia({ url: doc.url, mimeType: doc.mimeType, label: doc.label, originalName: doc.originalName }),
+        mimeType: doc.mimeType,
+        sourceLabel: 'Project document',
+      })
+    }
+    for (const task of tasks) {
+      if (!taskIdSet.has(task.id) && task.projectId !== project.id) continue
+      for (const attachment of task.attachments ?? []) {
+        items.push({
+          id: `task-att-${attachment.id}`,
+          title: attachment.label,
+          url: attachment.url,
+          kind: classifyMedia({
+            url: attachment.url,
+            mimeType: attachment.mimeType,
+            label: attachment.label,
+            originalName: attachment.originalName,
+          }),
+          mimeType: attachment.mimeType,
+          sourceLabel: 'Task attachment',
+          taskId: task.id,
+          taskTitle: task.title,
+        })
+      }
+      for (const deliverable of task.deliverables ?? []) {
+        if (!deliverable.evidenceUrl) continue
+        items.push({
+          id: `task-del-${deliverable.id}`,
+          title: deliverable.title,
+          url: deliverable.evidenceUrl,
+          kind: classifyMedia({
+            url: deliverable.evidenceUrl,
+            label: deliverable.title,
+            originalName: deliverable.evidenceOriginalName,
+          }),
+          sourceLabel: 'Deliverable evidence',
+          taskId: task.id,
+          taskTitle: task.title,
+        })
+      }
+    }
+    return items
+  }, [documents, tasks, project.id, project.taskIds])
+
+  const filteredMedia = mediaFilter === 'all' ? houseMedia : houseMedia.filter((item) => item.kind === mediaFilter)
+
+  function commitDocuments(next: ProjectDocument[]) {
+    setDocuments(next)
+    onDocumentsChange?.(next)
+  }
+
+  async function handleUploadedProjectDoc(file: UploadedFile) {
+    setError(null)
+    const result = await addProjectDocument({
+      projectId: project.id,
+      label: file.label || file.originalName || 'Uploaded file',
+      url: file.url,
+      publicId: file.publicId,
+      bytes: file.bytes,
+      mimeType: file.mimeType,
+      originalName: file.originalName,
+    })
+    if ('error' in result && result.error) {
+      setError(result.error)
+      return
+    }
+    if ('document' in result && result.document) {
+      const next = [result.document as ProjectDocument, ...documents]
+      commitDocuments(next)
+      setSelectedDocId(result.document.id)
+      setNotice('Document added to the project.')
+      onRefresh?.()
+    }
+  }
+
+  function handleAddDocLink() {
+    const label = docLinkLabel.trim()
+    const url = docLinkUrl.trim()
+    if (!label || !url) {
+      setError('Label and https link are required.')
+      return
+    }
+    setError(null)
+    startTransition(async () => {
+      const result = await addProjectDocument({ projectId: project.id, label, url })
+      if ('error' in result && result.error) {
+        setError(result.error)
+        return
+      }
+      if ('document' in result && result.document) {
+        const next = [result.document as ProjectDocument, ...documents]
+        commitDocuments(next)
+        setSelectedDocId(result.document.id)
+        setDocLinkLabel('')
+        setDocLinkUrl('')
+        setNotice('Document link added.')
+        onRefresh?.()
+      }
+    })
+  }
+
+  function handleDeleteDoc(documentId: string) {
+    setDeletingDocId(documentId)
+    setError(null)
+    startTransition(async () => {
+      const result = await deleteProjectDocument(documentId)
+      setDeletingDocId(null)
+      if ('error' in result && result.error) {
+        setError(result.error)
+        return
+      }
+      const next = documents.filter((doc) => doc.id !== documentId)
+      commitDocuments(next)
+      if (selectedDocId === documentId) setSelectedDocId(next[0]?.id ?? null)
+      setNotice('Document removed.')
+      onRefresh?.()
+    })
+  }
+
+  function handleDocComment() {
+    if (!selectedDoc || !docComment.trim()) return
+    const body = docComment.trim()
+    setError(null)
+    startTransition(async () => {
+      const result = await addProjectDocumentComment({ documentId: selectedDoc.id, body })
+      if ('error' in result && result.error) {
+        setError(result.error)
+        return
+      }
+      if ('comment' in result && result.comment) {
+        const next = documents.map((doc) =>
+          doc.id === selectedDoc.id
+            ? { ...doc, comments: [...(doc.comments ?? []), result.comment as ProjectDocumentComment] }
+            : doc,
+        )
+        commitDocuments(next)
+        setDocComment('')
+        onRefresh?.()
+      }
+    })
+  }
   const addableDepartments = departments.filter(
     (department) => department.id !== project.departmentId && !contributingIds.has(department.id),
   )
@@ -453,6 +666,8 @@ export function ProjectWorkspace({
               [
                 ['work', 'Work', String(linkedTaskCount)],
                 ['overview', 'Overview', null],
+                ['docs', 'Docs', String(documents.length)],
+                ['media', 'Media', String(houseMedia.length)],
                 ['people', 'People', String((project.team ?? []).length)],
                 ['pulse', 'Pulse', String((project.activity ?? []).length)],
               ] as const
@@ -885,6 +1100,224 @@ export function ProjectWorkspace({
             </div>
           ) : null}
 
+          {focus === 'docs' ? (
+            <section className="project-section project-section-docs">
+              <header className="project-section-head">
+                <div>
+                  <h2>Documents</h2>
+                  <p>Project reference files shared with every linked task</p>
+                </div>
+              </header>
+
+              {allowDocs ? (
+                <div className="project-docs-compose">
+                  <FileDropzone
+                    kind="project_document"
+                    entityId={project.id}
+                    label="Upload a project document"
+                    disabled={isPending}
+                    onUploaded={(file) => void handleUploadedProjectDoc(file)}
+                  />
+                  <div className="project-docs-link-form">
+                    <label className="form-field">
+                      <span>Or paste a link</span>
+                      <input
+                        value={docLinkLabel}
+                        onChange={(event) => setDocLinkLabel(event.target.value)}
+                        placeholder="Label"
+                        disabled={isPending}
+                      />
+                    </label>
+                    <label className="form-field">
+                      <span className="sr-only">URL</span>
+                      <input
+                        value={docLinkUrl}
+                        onChange={(event) => setDocLinkUrl(event.target.value)}
+                        placeholder="https://…"
+                        disabled={isPending}
+                      />
+                    </label>
+                    <Button type="button" className="create-button" disabled={isPending} onClick={handleAddDocLink}>
+                      Add link
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <p className="td-muted">Ask a project lead or teammate to add reference documents.</p>
+              )}
+
+              {documents.length === 0 ? (
+                <p className="empty-state">No project documents yet.</p>
+              ) : (
+                <div className="project-docs-layout">
+                  <div className="project-docs-list">
+                    {documents.map((doc) => (
+                      <button
+                        key={doc.id}
+                        type="button"
+                        className={`project-doc-item${selectedDoc?.id === doc.id ? ' is-on' : ''}`}
+                        onClick={() => setSelectedDocId(doc.id)}
+                      >
+                        <strong>{doc.label}</strong>
+                        <span>
+                          {doc.uploader ? `${doc.uploader.firstName} ${doc.uploader.lastName}` : 'Uploaded'}
+                          {doc.comments?.length ? ` · ${doc.comments.length} note${doc.comments.length === 1 ? '' : 's'}` : ''}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  {selectedDoc ? (
+                    <div className="project-doc-detail">
+                      <div className="project-doc-detail-head">
+                        <div>
+                          <h3>{selectedDoc.label}</h3>
+                          <p>
+                            {selectedDoc.uploader
+                              ? `${selectedDoc.uploader.firstName} ${selectedDoc.uploader.lastName}`
+                              : 'Unknown uploader'}
+                            {selectedDoc.createdAt ? ` · ${formatRelative(selectedDoc.createdAt)}` : ''}
+                          </p>
+                        </div>
+                        <div className="project-doc-detail-actions">
+                          <Button
+                            type="button"
+                            className="ghost-button"
+                            onClick={() =>
+                              setViewerItem({
+                                id: selectedDoc.id,
+                                title: selectedDoc.label,
+                                url: selectedDoc.url,
+                                kind: classifyMedia({
+                                  url: selectedDoc.url,
+                                  mimeType: selectedDoc.mimeType,
+                                  label: selectedDoc.label,
+                                  originalName: selectedDoc.originalName,
+                                }),
+                                mimeType: selectedDoc.mimeType,
+                                sourceLabel: 'Project document',
+                              })
+                            }
+                          >
+                            Preview
+                          </Button>
+                          {(canManage || selectedDoc.userId === currentUserId) && (
+                            <button
+                              type="button"
+                              className="attachment-remove"
+                              disabled={deletingDocId === selectedDoc.id || isPending}
+                              onClick={() => handleDeleteDoc(selectedDoc.id)}
+                            >
+                              {deletingDocId === selectedDoc.id ? 'Removing…' : 'Remove'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <AttachmentRow label={selectedDoc.label} url={selectedDoc.url} bytes={selectedDoc.bytes} />
+                      <div className="project-doc-comments">
+                        <h4>Notes on this document</h4>
+                        {(selectedDoc.comments ?? []).length === 0 ? (
+                          <p className="td-muted">No notes yet. Task teammates can leave context here.</p>
+                        ) : (
+                          <ul className="project-doc-comment-list">
+                            {(selectedDoc.comments ?? []).map((comment) => (
+                              <li key={comment.id}>
+                                <UserAvatar
+                                  initials={comment.user?.initials ?? '—'}
+                                  url={comment.user?.avatarUrl}
+                                  color={comment.user?.avatarColor}
+                                  size="sm"
+                                />
+                                <div>
+                                  <strong>
+                                    {comment.user
+                                      ? `${comment.user.firstName} ${comment.user.lastName}`
+                                      : 'Someone'}
+                                  </strong>
+                                  <span suppressHydrationWarning>{formatRelative(comment.createdAt)}</span>
+                                  <p>{comment.body}</p>
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        <label className="form-field">
+                          <span>Add a note</span>
+                          <textarea
+                            value={docComment}
+                            onChange={(event) => setDocComment(event.target.value)}
+                            rows={3}
+                            placeholder="Clarify how this document should be used on linked work…"
+                            disabled={isPending}
+                          />
+                        </label>
+                        <Button
+                          type="button"
+                          className="create-button"
+                          disabled={isPending || !docComment.trim()}
+                          onClick={handleDocComment}
+                        >
+                          Post note
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </section>
+          ) : null}
+
+          {focus === 'media' ? (
+            <section className="project-section project-section-media">
+              <header className="project-section-head">
+                <div>
+                  <h2>Media house</h2>
+                  <p>Images, files, and links from project docs and linked tasks</p>
+                </div>
+              </header>
+              <div className="project-media-filters">
+                {(
+                  [
+                    ['all', 'All'],
+                    ['image', 'Images'],
+                    ['pdf', 'PDFs'],
+                    ['link', 'Links'],
+                    ['file', 'Files'],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`filter-pill${mediaFilter === id ? ' selected' : ''}`}
+                    onClick={() => setMediaFilter(id)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {filteredMedia.length === 0 ? (
+                <p className="empty-state">Nothing attached yet. Add docs on the project or files on tasks.</p>
+              ) : (
+                <div className="project-media-grid">
+                  {filteredMedia.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className="project-media-card"
+                      onClick={() => setViewerItem(item)}
+                    >
+                      <span className={`project-media-kind kind-${item.kind}`}>{item.kind}</span>
+                      <strong>{item.title}</strong>
+                      <span>
+                        {item.sourceLabel}
+                        {item.taskTitle ? ` · ${item.taskTitle}` : ''}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+          ) : null}
+
           {focus === 'pulse' ? (
             <section className="project-section project-section-pulse">
               <header className="project-section-head">
@@ -916,6 +1349,17 @@ export function ProjectWorkspace({
           ) : null}
         </div>
       </div>
+
+      {viewerItem ? (
+        <MediaViewer
+          item={viewerItem}
+          onClose={() => setViewerItem(null)}
+          onOpenTask={(taskId) => {
+            setViewerItem(null)
+            onOpenTask(taskId)
+          }}
+        />
+      ) : null}
 
       {drawer === 'edit' && canManage ? (
         <ProjectDrawer title="Edit project" subtitle="Name, lead, home department, and lifecycle" onClose={closeDrawer}>

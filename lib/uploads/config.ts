@@ -19,7 +19,12 @@ export const ALLOWED_UPLOAD_MIME_TYPES = [
 
 export const AVATAR_UPLOAD_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const
 
-export type UploadKind = 'task_attachment' | 'deliverable_evidence' | 'user_avatar' | 'office_evidence'
+export type UploadKind =
+  | 'task_attachment'
+  | 'deliverable_evidence'
+  | 'user_avatar'
+  | 'office_evidence'
+  | 'project_document'
 
 const MIME_BY_EXTENSION: Record<string, (typeof ALLOWED_UPLOAD_MIME_TYPES)[number]> = {
   pdf: 'application/pdf',
@@ -59,6 +64,7 @@ export function getUploadFolder(kind: UploadKind, entityId: string) {
   if (kind === 'deliverable_evidence') return `${root}/deliverables/${entityId}`
   if (kind === 'user_avatar') return `${root}/avatars/${entityId}`
   if (kind === 'office_evidence') return `${root}/office/${entityId}`
+  if (kind === 'project_document') return `${root}/projects/${entityId}`
   return `${root}/tasks/${entityId}`
 }
 

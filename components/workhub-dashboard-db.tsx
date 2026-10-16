@@ -445,6 +445,37 @@ type DbProject = {
     taskIds: string[]
   }>
   team?: Array<{ id: string; firstName: string; lastName: string; initials: string; avatarUrl?: string | null; avatarColor?: string | null }>
+  documents?: Array<{
+    id: string
+    label: string
+    url: string
+    bytes?: number | null
+    mimeType?: string | null
+    originalName?: string | null
+    userId?: string | null
+    createdAt?: string | Date
+    uploader?: {
+      id?: string
+      firstName: string
+      lastName: string
+      initials: string
+      avatarUrl?: string | null
+      avatarColor?: string | null
+    } | null
+    comments?: Array<{
+      id: string
+      body: string
+      createdAt: string | Date
+      userId?: string | null
+      user?: {
+        initials: string
+        firstName: string
+        lastName: string
+        avatarUrl?: string | null
+        avatarColor?: string | null
+      } | null
+    }>
+  }>
 }
 
 type DbNotification = {
@@ -514,7 +545,7 @@ export default function WorkhubDashboardDB({
   allActivity,
   myTasks: initialMyTasks,
   myMetrics,
-  projects,
+  projects: initialProjects,
   reportMetrics,
   currentUserId,
   currentUserRoles,
@@ -593,6 +624,7 @@ export default function WorkhubDashboardDB({
   const commandQuery = query.trim().toLowerCase()
   const [projectStatusFilter, setProjectStatusFilter] = useState<'all' | 'On track' | 'At risk' | 'Needs review'>('all')
   const [tasks, setTasks] = useState(initialTasks)
+  const [projects, setProjects] = useState(initialProjects)
   const [responsibilityRows, setResponsibilityRows] = useState(responsibilities)
   const [selectedTask, setSelectedTask] = useState<DbTask | null>(null)
   const [showNotifications, setShowNotifications] = useState(false)
@@ -669,6 +701,10 @@ export default function WorkhubDashboardDB({
   useEffect(() => {
     setTasks(initialTasks)
   }, [initialTasks])
+
+  useEffect(() => {
+    setProjects(initialProjects)
+  }, [initialProjects])
 
   useEffect(() => {
     setSelectedTaskIds((current) => {
@@ -3074,12 +3110,36 @@ export default function WorkhubDashboardDB({
                 assignee: task.assignee,
                 projectId: task.projectId,
                 helpers: (task.helpers ?? []).filter((helper): helper is typeof helper & { id: string } => Boolean(helper.id)),
+                attachments: task.attachments?.map((attachment) => ({
+                  id: attachment.id,
+                  label: attachment.label,
+                  url: attachment.url,
+                  bytes: attachment.bytes,
+                  mimeType: attachment.mimeType,
+                  originalName: attachment.originalName,
+                })),
+                deliverables: task.deliverables?.map((deliverable) => ({
+                  id: deliverable.id,
+                  title: deliverable.title,
+                  evidenceUrl: deliverable.evidenceUrl,
+                  evidenceOriginalName: deliverable.evidenceOriginalName,
+                })),
               }))}
               canManage={canManageSelectedProject}
               canCreateWork={canCreateWork}
+              canUploadDocs={Boolean(
+                canManageSelectedProject ||
+                  selectedProject.team?.some((member) => member.id === currentUserId),
+              )}
+              currentUserId={currentUserId}
               lockLeadToSelf={isMemberCreator}
               openNotifyOnMount={searchParams.get('notify') === '1'}
               onRefresh={() => router.refresh()}
+              onDocumentsChange={(documents) => {
+                setProjects((current) =>
+                  current.map((entry) => (entry.id === selectedProject.id ? { ...entry, documents } : entry)),
+                )
+              }}
               onBack={() => nav('Projects')}
               onCreateTask={(milestoneId) => {
                 setCreateTaskMilestoneId(milestoneId)
@@ -3559,6 +3619,19 @@ export default function WorkhubDashboardDB({
             teamUserIds: project.team?.map((member) => member.id) ?? [],
             milestones: project.milestones?.map((milestone) => ({ id: milestone.id, title: milestone.title })) ?? [],
           }))}
+          projectDocuments={
+            selectedTask.projectId
+              ? (projects.find((project) => project.id === selectedTask.projectId)?.documents ?? []).map((doc) => ({
+                  id: doc.id,
+                  label: doc.label,
+                  url: doc.url,
+                  bytes: doc.bytes,
+                  mimeType: doc.mimeType,
+                  originalName: doc.originalName,
+                  comments: doc.comments?.map((comment) => ({ id: comment.id, body: comment.body })),
+                }))
+              : []
+          }
           canCreateWork={canCreateWork}
           currentUserDepartmentId={currentUser?.departmentId ?? ''}
           onSetPlacement={handleSetTaskPlacement}

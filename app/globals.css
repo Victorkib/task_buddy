@@ -818,6 +818,88 @@ html:has(.auth-shell) body { background: #020617; }
 .project-section-overview { border-left-color: #1a2f6b; background: color-mix(in oklch, #1a2f6b 4%, var(--card)); }
 .project-section-people { border-left-color: #15803d; background: color-mix(in oklch, #15803d 4%, var(--card)); }
 .project-section-pulse { border-left-color: #475569; background: color-mix(in oklch, #64748b 4%, var(--card)); }
+.project-section-docs { border-left-color: #0f766e; background: color-mix(in oklch, #0f766e 4%, var(--card)); }
+.project-section-media { border-left-color: #9a3412; background: color-mix(in oklch, #c2410c 4%, var(--card)); }
+.project-docs-compose { display: grid; gap: 12px; }
+.project-docs-link-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: 10px; align-items: end; }
+.project-docs-layout { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); gap: 14px; align-items: start; }
+.project-docs-list { display: grid; gap: 8px; }
+.project-doc-item {
+  display: grid; gap: 2px; text-align: left; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--background); cursor: pointer;
+}
+.project-doc-item.is-on { border-color: #0f766e; background: color-mix(in oklch, #0f766e 8%, white); }
+.project-doc-item strong { font-size: 13px; }
+.project-doc-item span { font-size: 11px; color: var(--muted-foreground); }
+.project-doc-detail { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+.project-doc-detail-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.project-doc-detail-head h3 { margin: 0; font-size: 16px; }
+.project-doc-detail-head p { margin: 4px 0 0; font-size: 12px; color: var(--muted-foreground); }
+.project-doc-detail-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.project-doc-comments { display: grid; gap: 10px; }
+.project-doc-comments h4 { margin: 0; font-size: 13px; }
+.project-doc-comment-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.project-doc-comment-list li { display: grid; grid-template-columns: auto 1fr; gap: 10px; }
+.project-doc-comment-list strong { font-size: 12px; }
+.project-doc-comment-list span { margin-left: 8px; font-size: 11px; color: var(--muted-foreground); }
+.project-doc-comment-list p { margin: 4px 0 0; font-size: 13px; line-height: 1.45; }
+.project-media-filters { display: flex; flex-wrap: wrap; gap: 8px; }
+.project-media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.project-media-card {
+  display: grid; gap: 6px; text-align: left; padding: 14px; border-radius: 12px;
+  border: 1px solid var(--border); background: var(--card); cursor: pointer;
+}
+.project-media-card:hover { border-color: #9a3412; }
+.project-media-card strong { font-size: 13px; letter-spacing: -.01em; }
+.project-media-card span { font-size: 11px; color: var(--muted-foreground); }
+.project-media-kind {
+  display: inline-flex; width: fit-content; padding: 2px 8px; border-radius: 999px;
+  font-size: 10px; font-weight: 750; text-transform: uppercase; letter-spacing: .04em;
+  background: #f1f5f9; color: #334155;
+}
+.project-media-kind.kind-image { background: #ecfdf5; color: #047857; }
+.project-media-kind.kind-pdf { background: #fef2f2; color: #b91c1c; }
+.project-media-kind.kind-link { background: #eff6ff; color: #1d4ed8; }
+.project-media-kind.kind-file { background: #f8fafc; color: #475569; }
+.media-viewer-scrim {
+  position: fixed; inset: 0; z-index: calc(var(--z-modal) + 2); background: oklch(.2 .03 255 / .5);
+  display: grid; place-items: center; padding: 24px;
+}
+.media-viewer-panel {
+  width: min(960px, 100%); height: min(82vh, 900px); display: grid; grid-template-rows: auto 1fr;
+  background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: 0 24px 60px oklch(.2 .03 255 / .28); overflow: hidden;
+}
+.media-viewer-head {
+  display: flex; justify-content: space-between; gap: 12px; align-items: flex-start;
+  padding: 14px 16px; border-bottom: 1px solid var(--border);
+}
+.media-viewer-head h2 { margin: 0; font-size: 16px; }
+.media-viewer-head p { margin: 4px 0 0; font-size: 12px; color: var(--muted-foreground); }
+.media-viewer-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ghost-button {
+  display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border);
+  background: var(--background); border-radius: 8px; padding: 7px 10px; font-size: 12px;
+  font-weight: 650; color: inherit; text-decoration: none; cursor: pointer;
+}
+.media-viewer-body { min-height: 0; background: #0f172a; display: grid; }
+.media-viewer-image, .media-viewer-frame { width: 100%; height: 100%; border: 0; object-fit: contain; background: #0f172a; }
+.media-viewer-fallback {
+  display: grid; place-items: center; gap: 12px; color: #e2e8f0; padding: 24px; text-align: center;
+}
+.td-progress-mail { display: grid; gap: 6px; margin-top: 4px; }
+.td-progress-mail .create-button { width: fit-content; }
+.td-progress-mail-form { display: grid; gap: 12px; margin: 12px 0; max-height: min(52vh, 420px); overflow: auto; }
+.td-progress-recipients { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: grid; gap: 8px; }
+.td-progress-recipients legend { font-size: 11px; font-weight: 750; padding: 0 4px; }
+.td-progress-recipient { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: start; font-size: 12px; }
+.td-progress-recipient strong { display: block; }
+.td-progress-recipient em { color: var(--muted-foreground); font-style: normal; font-size: 11px; }
+.td-project-docs { display: grid; gap: 10px; margin-bottom: 8px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+.td-project-doc-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; }
+@media (max-width: 900px) {
+  .project-docs-layout, .project-docs-link-form, .td-project-doc-row { grid-template-columns: 1fr; }
+}
 .project-section-head h2 { margin: 0; font-size: 17px; letter-spacing: -.02em; color: #1a2f6b; }
 .project-section-head p { margin: 4px 0 0; font-size: 12px; color: var(--muted-foreground); }
 .project-overview-copy { margin: 0; font-size: 14px; line-height: 1.55; }

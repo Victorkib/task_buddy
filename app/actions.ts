@@ -46,6 +46,8 @@ import {
   departments,
   deliverables,
   projectDepartments,
+  projectDocumentComments,
+  projectDocuments,
   projectMilestones,
   projectMilestoneTasks,
   projectTeams,
@@ -1577,6 +1579,254 @@ export async function deleteAttachment(attachmentId: string) {
   await getDb().delete(taskAttachments).where(eq(taskAttachments.id, attachmentId))
   refreshWorkhub()
   return { ok: true as const }
+}
+
+function canUploadProjectDocument(
+  user: NonNullable<Awaited<ReturnType<typeof getCurrentUser>>>,
+  access: {
+    ownerId: string
+    departmentId?: string | null
+    teamUserIds: string[]
+    contributingDepartmentIds: string[]
+  },
+) {
+  return canManageProject(user, access) || access.teamUserIds.includes(user.id)
+}
+
+export async function addProjectDocument(input: {
+  projectId: string
+  label: string
+  url: string
+  publicId?: string | null
+  bytes?: number | null
+  mimeType?: string | null
+  originalName?: string | null
+}) {
+  const label = input.label.trim()
+  const url = input.url.trim()
+  if (!label || !url) return { error: 'A file or document link is required.' }
+  if (!isSafeAttachmentUrl(url)) return { error: 'Use an https link, or upload a file from this device.' }
+
+  const loaded = await requireVisibleProject(input.projectId)
+  if ('error' in loaded) return loaded
+  const { currentUser, access, project } = loaded
+  if (!canUploadProjectDocument(currentUser, access)) {
+    return denied('You are not allowed to add documents to this project.')
+  }
+
+  const [document] = await getDb()
+    .insert(projectDocuments)
+    .values({
+      projectId: input.projectId,
+      userId: currentUser.id,
+      label,
+      url,
+      publicId: input.publicId?.trim() || null,
+      bytes: input.bytes ?? null,
+      mimeType: input.mimeType?.trim() || null,
+      originalName: input.originalName?.trim() || null,
+    })
+    .returning()
+
+  await getDb().insert(activityEvents).values({
+    companyId: project.companyId,
+    actorId: currentUser.id,
+    entityType: 'project',
+    entityId: input.projectId,
+    action: 'attached',
+    summary: `added document “${label}” to ${project.title}`,
+  })
+
+  refreshWorkhub()
+  return {
+    ok: true as const,
+    document: {
+      id: document.id,
+      label: document.label,
+      url: document.url,
+      bytes: document.bytes,
+      mimeType: document.mimeType,
+      originalName: document.originalName,
+      userId: document.userId,
+      createdAt: document.createdAt,
+      comments: [] as Array<{
+        id: string
+        body: string
+        createdAt: Date
+        userId: string | null
+        user: { initials: string; firstName: string; lastName: string; avatarUrl: string | null; avatarColor: string | null } | null
+      }>,
+      uploader: {
+        id: currentUser.id,
+        firstName: currentUser.firstName,
+        lastName: currentUser.lastName,
+        initials: currentUser.initials,
+        avatarUrl: currentUser.avatarUrl,
+        avatarColor: currentUser.avatarColor,
+      },
+    },
+  }
+}
+
+export async function deleteProjectDocument(documentId: string) {
+  const currentUser = await getCurrentUser()
+  if (!currentUser) return { error: 'Not signed in.' }
+
+  const [document] = await getDb().select().from(projectDocuments).where(eq(projectDocuments.id, documentId)).limit(1)
+  if (!document) return { error: 'Document not found.' }
+
+  const loaded = await loadProjectAccess(document.projectId)
+  if (!loaded || !canSeeProject(currentUser, loaded.access)) return { error: 'Project not found.' }
+  const mayDelete =
+    document.userId === currentUser.id || canManageProject(currentUser, loaded.access)
+  if (!mayDelete) return denied('You are not allowed to remove this document.')
+
+  if (document.publicId) {
+    try {
+      await destroyCloudinaryAsset(document.publicId)
+    } catch {
+      return { error: 'Stored file could not be removed. The document was left in place.' }
+    }
+  }
+
+  await getDb().delete(projectDocuments).where(eq(projectDocuments.id, documentId))
+  refreshWorkhub()
+  return { ok: true as const }
+}
+
+export async function addProjectDocumentComment(input: { documentId: string; body: string }) {
+  const body = input.body.trim()
+  if (!body) return { error: 'Write a comment before posting.' }
+
+  const currentUser = await getCurrentUser()
+  if (!currentUser) return { error: 'Not signed in.' }
+
+  const [document] = await getDb().select().from(projectDocuments).where(eq(projectDocuments.id, input.documentId)).limit(1)
+  if (!document) return { error: 'Document not found.' }
+
+  const loaded = await loadProjectAccess(document.projectId)
+  if (!loaded || !canSeeProject(currentUser, loaded.access)) {
+    return denied('You are not allowed to comment on this document.')
+  }
+
+  const [comment] = await getDb()
+    .insert(projectDocumentComments)
+    .values({
+      documentId: input.documentId,
+      userId: currentUser.id,
+      body,
+    })
+    .returning()
+
+  refreshWorkhub()
+  return {
+    ok: true as const,
+    comment: {
+      id: comment.id,
+      body: comment.body,
+      createdAt: comment.createdAt,
+      userId: comment.userId,
+      user: {
+        initials: currentUser.initials,
+        firstName: currentUser.firstName,
+        lastName: currentUser.lastName,
+        avatarUrl: currentUser.avatarUrl,
+        avatarColor: currentUser.avatarColor,
+      },
+    },
+  }
+}
+
+export async function sendTaskProgressNotice(input: {
+  taskId: string
+  recipientIds: string[]
+  subject: string
+  body: string
+}) {
+  const subject = input.subject.trim()
+  const body = input.body.trim()
+  const recipientIds = [...new Set(input.recipientIds.filter(Boolean))]
+  if (!input.taskId) return { error: 'Task is required.' }
+  if (recipientIds.length === 0) return { error: 'Choose at least one person to notify.' }
+  if (!subject) return { error: 'Give the email a subject.' }
+  if (!body) return { error: 'Write the email before sending.' }
+
+  const currentUser = await getCurrentUser()
+  if (!currentUser) return { error: 'Not signed in.' }
+  const loaded = await loadTaskAccess(input.taskId)
+  if (!loaded) return { error: 'Task not found.' }
+  if (!canProgressTask(currentUser, loaded.access)) {
+    return denied('You are not allowed to send progress updates on this task.')
+  }
+
+  const recipients = await getDb().select().from(users).where(inArray(users.id, recipientIds))
+  if (recipients.length === 0) return { error: 'No valid recipients found.' }
+
+  const company = await getCompany()
+  const projectTitle = loaded.task.projectId
+    ? (await getDb().query.projects.findFirst({ where: eq(projects.id, loaded.task.projectId) }))?.title ?? null
+    : null
+
+  const { taskProgressNoticeEmail } = await import('@/lib/mail/templates')
+  const { trySendMail, taskMailUrl } = await import('@/lib/mail/task-notify')
+
+  let sent = 0
+  const failures: string[] = []
+  for (const recipient of recipients) {
+    try {
+      const message = taskProgressNoticeEmail({
+        recipientFirstName: recipient.firstName,
+        authorName: fullName(currentUser),
+        taskTitle: loaded.task.title,
+        projectTitle,
+        subject,
+        body,
+        taskUrl: taskMailUrl(input.taskId),
+        companyName: company?.name ?? 'Globecon Convergence Solutions',
+      })
+      const ok = await trySendMail(recipient.email, message)
+      if (ok) {
+        sent += 1
+        await getDb().insert(notifications).values({
+          companyId: loaded.task.companyId,
+          userId: recipient.id,
+          type: 'reminder',
+          title: 'Task progress update',
+          body: `${currentUser.firstName} ${currentUser.lastName} shared an update on “${loaded.task.title}”.`,
+          entityType: 'task',
+          entityId: input.taskId,
+        })
+      } else {
+        failures.push(recipient.email || fullName(recipient))
+      }
+    } catch {
+      failures.push(recipient.email || fullName(recipient))
+    }
+  }
+
+  await getDb().insert(activityEvents).values({
+    companyId: loaded.task.companyId,
+    actorId: currentUser.id,
+    entityType: 'task',
+    entityId: input.taskId,
+    action: 'notified',
+    summary: `sent progress update on ${loaded.task.title} to ${sent} recipient${sent === 1 ? '' : 's'}`,
+  })
+
+  refreshWorkhub()
+  if (sent === 0) {
+    return {
+      error:
+        failures.length > 0
+          ? `Email could not be sent (${failures.slice(0, 3).join(', ')}). Check mail configuration.`
+          : 'Email could not be sent. Check mail configuration.',
+    }
+  }
+  return {
+    ok: true as const,
+    sent,
+    failed: failures.length,
+  }
 }
 
 function isSafeAttachmentUrl(url: string) {

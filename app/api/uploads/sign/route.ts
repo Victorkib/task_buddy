@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { eq } from 'drizzle-orm'
-import { canProgressTask } from '@/lib/auth/permissions'
+import { canManageProject, canProgressTask, canSeeProject } from '@/lib/auth/permissions'
 import { getDb } from '@/lib/db'
 import { getCurrentUser } from '@/lib/db/queries'
-import { loadTaskAccess } from '@/lib/db/task-access'
+import { loadProjectAccess, loadTaskAccess } from '@/lib/db/task-access'
 import { deliverables } from '@/lib/db/schema'
 import { createSignedUpload, isCloudinaryConfigured } from '@/lib/uploads/cloudinary'
 import {
@@ -21,7 +21,13 @@ export const dynamic = 'force-dynamic'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 function isUploadKind(value: unknown): value is UploadKind {
-  return value === 'task_attachment' || value === 'deliverable_evidence' || value === 'user_avatar' || value === 'office_evidence'
+  return (
+    value === 'task_attachment' ||
+    value === 'deliverable_evidence' ||
+    value === 'user_avatar' ||
+    value === 'office_evidence' ||
+    value === 'project_document'
+  )
 }
 
 export async function POST(request: Request) {
@@ -82,6 +88,15 @@ export async function POST(request: Request) {
     const loaded = await loadTaskAccess(entityId)
     if (!loaded || !canProgressTask(currentUser, loaded.access)) {
       return NextResponse.json({ error: 'You are not allowed to attach files to this task.' }, { status: 403 })
+    }
+  } else if (kind === 'project_document') {
+    const loaded = await loadProjectAccess(entityId)
+    if (
+      !loaded ||
+      !canSeeProject(currentUser, loaded.access) ||
+      (!canManageProject(currentUser, loaded.access) && !loaded.access.teamUserIds.includes(currentUser.id))
+    ) {
+      return NextResponse.json({ error: 'You are not allowed to add documents to this project.' }, { status: 403 })
     }
   } else {
     const [deliverable] = await getDb().select().from(deliverables).where(eq(deliverables.id, entityId)).limit(1)

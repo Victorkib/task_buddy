@@ -400,6 +400,16 @@ export async function listProjects(options?: { limit?: number; viewer?: CurrentU
       teams: { with: { user: true } },
       projectDepartments: { with: { department: true } },
       tasks: true,
+      documents: {
+        with: {
+          user: true,
+          comments: {
+            with: { user: true },
+            orderBy: (table, { asc: a }) => [a(table.createdAt)],
+          },
+        },
+        orderBy: (table, { desc: d }) => [d(table.createdAt)],
+      },
       milestones: {
         with: {
           milestoneTasks: {
@@ -560,6 +570,41 @@ export async function listProjects(options?: { limit?: number; viewer?: CurrentU
         initials: entry.user.initials,
         avatarUrl: entry.user.avatarUrl,
         avatarColor: entry.user.avatarColor,
+      })),
+      documents: (project.documents ?? []).map((document) => ({
+        id: document.id,
+        label: document.label,
+        url: document.url,
+        bytes: document.bytes,
+        mimeType: document.mimeType,
+        originalName: document.originalName,
+        userId: document.userId,
+        createdAt: document.createdAt,
+        uploader: document.user
+          ? {
+              id: document.user.id,
+              firstName: document.user.firstName,
+              lastName: document.user.lastName,
+              initials: document.user.initials,
+              avatarUrl: document.user.avatarUrl,
+              avatarColor: document.user.avatarColor,
+            }
+          : null,
+        comments: (document.comments ?? []).map((comment) => ({
+          id: comment.id,
+          body: comment.body,
+          createdAt: comment.createdAt,
+          userId: comment.userId,
+          user: comment.user
+            ? {
+                initials: comment.user.initials,
+                firstName: comment.user.firstName,
+                lastName: comment.user.lastName,
+                avatarUrl: comment.user.avatarUrl,
+                avatarColor: comment.user.avatarColor,
+              }
+            : null,
+        })),
       })),
     }
   })

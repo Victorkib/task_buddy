@@ -162,6 +162,13 @@
       "when": 1792200000000,
       "tag": "0022_office_expense_categories",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1792300000000,
+      "tag": "0023_project_documents",
+      "breakpoints": true
     }
   ]
 }

@@ -1065,6 +1065,39 @@ export const projectMilestoneTasks = pgTable(
   ],
 )
 
+export const projectDocuments = pgTable(
+  'project_documents',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    label: text('label').notNull(),
+    url: text('url').notNull(),
+    publicId: text('public_id'),
+    bytes: integer('bytes'),
+    mimeType: text('mime_type'),
+    originalName: text('original_name'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index('project_documents_project_idx').on(table.projectId)],
+)
+
+export const projectDocumentComments = pgTable(
+  'project_document_comments',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    documentId: uuid('document_id')
+      .notNull()
+      .references(() => projectDocuments.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    body: text('body').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index('project_document_comments_document_idx').on(table.documentId)],
+)
+
 export const projectsRelations = relations(projects, ({ one, many }) => ({
   owner: one(users, { fields: [projects.ownerId], references: [users.id], relationName: 'projectOwner' }),
   partner: one(users, { fields: [projects.partnerId], references: [users.id], relationName: 'projectPartner' }),
@@ -1073,6 +1106,7 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   projectDepartments: many(projectDepartments),
   milestones: many(projectMilestones),
   tasks: many(tasks),
+  documents: many(projectDocuments),
 }))
 
 export const projectTeamsRelations = relations(projectTeams, ({ one }) => ({
@@ -1093,6 +1127,17 @@ export const projectMilestonesRelations = relations(projectMilestones, ({ one, m
 export const projectMilestoneTasksRelations = relations(projectMilestoneTasks, ({ one }) => ({
   milestone: one(projectMilestones, { fields: [projectMilestoneTasks.milestoneId], references: [projectMilestones.id] }),
   task: one(tasks, { fields: [projectMilestoneTasks.taskId], references: [tasks.id] }),
+}))
+
+export const projectDocumentsRelations = relations(projectDocuments, ({ one, many }) => ({
+  project: one(projects, { fields: [projectDocuments.projectId], references: [projects.id] }),
+  user: one(users, { fields: [projectDocuments.userId], references: [users.id] }),
+  comments: many(projectDocumentComments),
+}))
+
+export const projectDocumentCommentsRelations = relations(projectDocumentComments, ({ one }) => ({
+  document: one(projectDocuments, { fields: [projectDocumentComments.documentId], references: [projectDocuments.id] }),
+  user: one(users, { fields: [projectDocumentComments.userId], references: [users.id] }),
 }))
 
 export const taskCommentsRelations = relations(taskComments, ({ one }) => ({
