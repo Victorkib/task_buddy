@@ -11,6 +11,48 @@ export type ExpenseDraft = {
   remarks: string
 }
 
+/** Core book categories for Globecon petty cash. Custom categories can be added beside these. */
+export const STANDARD_EXPENSE_CATEGORIES = [
+  'Petty cash',
+  'Rent',
+  'KPLC',
+  'FEE Payment',
+  'Dynamic Labs',
+  'Internet',
+  'Host Africa',
+  'Google',
+  'Claude Pro',
+  'Fuel',
+  'Car Service',
+  'Hospital Bills',
+  'Caffe Leo',
+] as const
+
+export type StandardExpenseCategory = (typeof STANDARD_EXPENSE_CATEGORIES)[number]
+
+export function isStandardExpenseCategory(value: string) {
+  return (STANDARD_EXPENSE_CATEGORIES as readonly string[]).includes(value)
+}
+
+export function mergeExpenseCategories(custom: string[], used: Array<string | null | undefined> = []) {
+  const names = new Set<string>(STANDARD_EXPENSE_CATEGORIES)
+  for (const name of custom) {
+    const cleaned = name.trim()
+    if (cleaned) names.add(cleaned)
+  }
+  for (const name of used) {
+    const cleaned = (name ?? '').trim()
+    if (cleaned) names.add(cleaned)
+  }
+  const standard = STANDARD_EXPENSE_CATEGORIES.filter((name) => names.has(name))
+  const extra = [...names].filter((name) => !isStandardExpenseCategory(name)).sort((a, b) => a.localeCompare(b))
+  return [...standard, ...extra]
+}
+
+export function cleanExpenseCategory(value: string) {
+  return value.replace(/\s+/g, ' ').trim().slice(0, 80)
+}
+
 const MAX_CENTS = 50_000_000 * 100
 
 export function formatExpenseKes(cents: number | null | undefined) {

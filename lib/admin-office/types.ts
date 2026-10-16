@@ -227,6 +227,7 @@ export type OfficeDesk = {
   offers: OfficeOffer[]
   documents: OfficeDocument[]
   expenses: OfficeExpense[]
+  expenseCategories: string[]
   invoiceSettings: OfficeInvoiceSettings
   paymentAccounts: OfficePaymentAccount[]
   clients: OfficeClient[]

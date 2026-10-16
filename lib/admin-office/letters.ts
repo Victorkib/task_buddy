@@ -1,3 +1,4 @@
+import { letterheadSrc } from '@/lib/admin-office/letterhead'
 import { LETTER_TYPE_LABELS } from '@/lib/admin-office/policy'
 import type { OfficeLetterType } from '@/lib/admin-office/types'
 
@@ -43,13 +44,8 @@ export function globeconDate(iso: string) {
   return `${day}${suffix} ${month} ${match[1]}`
 }
 
-function letterheadSrc(assetBase?: string) {
-  const base = (assetBase ?? '').replace(/\/$/, '')
-  return `${base}/globecon-letterhead.png`
-}
-
-function letterShell(title: string, inner: string, assetBase?: string) {
-  const src = letterheadSrc(assetBase)
+function letterShell(title: string, inner: string, options?: { assetBase?: string; letterhead?: string }) {
+  const src = options?.letterhead ?? letterheadSrc(options?.assetBase)
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -70,6 +66,8 @@ function letterShell(title: string, inner: string, assetBase?: string) {
       font-family: Calibri, "Segoe UI", Arial, sans-serif;
       font-size: 12pt;
       line-height: 1.45;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
     }
     .who { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; }
     .who strong { display: block; font-size: 13pt; color: #1a2f6b; }
@@ -134,6 +132,7 @@ export function buildStaffLetter(input: {
   purpose: string | null
   today: string
   assetBase?: string
+  letterhead?: string
 }) {
   const kind = LETTER_TYPE_LABELS[input.letterType]
   const number = input.documentNumber ?? 'To be assigned on approval'
@@ -171,7 +170,7 @@ export function buildStaffLetter(input: {
     )}
     <p class="sign">Yours faithfully,</p>
     <p><strong>Admin Office</strong><br />${escapeHtml(legalName(input.companyName))}</p>`
-  return letterShell(`${kind} — ${input.employeeName}`, inner, input.assetBase)
+  return letterShell(`${kind} — ${input.employeeName}`, inner, { assetBase: input.assetBase, letterhead: input.letterhead })
 }
 
 export function buildOfferLetter(input: {
@@ -186,6 +185,7 @@ export function buildOfferLetter(input: {
   notes: string | null
   today: string
   assetBase?: string
+  letterhead?: string
 }) {
   const number = input.documentNumber ?? 'Draft'
   const dated = globeconDate(input.today)
@@ -213,7 +213,7 @@ export function buildOfferLetter(input: {
     <p>Please confirm in writing if you accept this offer.</p>
     <p class="sign">Yours faithfully,</p>
     <p><strong>Admin Office</strong><br />${escapeHtml(legalName(input.companyName))}</p>`
-  return letterShell(`Offer — ${input.candidateName}`, inner, input.assetBase)
+  return letterShell(`Offer — ${input.candidateName}`, inner, { assetBase: input.assetBase, letterhead: input.letterhead })
 }
 
 export const DOCUMENT_STARTERS: Array<{ id: string; title: string; category: string; body: string }> = [

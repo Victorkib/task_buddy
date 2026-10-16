@@ -793,6 +793,22 @@ export const officeExpenses = pgTable(
   (table) => [index('office_expenses_spent_on_idx').on(table.companyId, table.spentOn)],
 )
 
+export const officeExpenseCategories = pgTable(
+  'office_expense_categories',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('office_expense_categories_company_name_idx').on(table.companyId, table.name),
+    index('office_expense_categories_company_idx').on(table.companyId),
+  ],
+)
+
 export const officeAssets = pgTable(
   'office_assets',
   {
@@ -1205,6 +1221,10 @@ export const officeVendorsRelations = relations(officeVendors, ({ one }) => ({
 export const officeExpensesRelations = relations(officeExpenses, ({ one }) => ({
   company: one(companies, { fields: [officeExpenses.companyId], references: [companies.id] }),
   createdBy: one(users, { fields: [officeExpenses.createdById], references: [users.id] }),
+}))
+
+export const officeExpenseCategoriesRelations = relations(officeExpenseCategories, ({ one }) => ({
+  company: one(companies, { fields: [officeExpenseCategories.companyId], references: [companies.id] }),
 }))
 
 export const officeInvoiceSettings = pgTable('office_invoice_settings', {

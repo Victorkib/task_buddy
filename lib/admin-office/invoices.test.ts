@@ -51,7 +51,7 @@ const html = buildInvoiceHtml({
 })
 assert(html.includes('P051234567B'), 'the company PIN on the invoice is the one saved for it')
 assert(html.includes('Paybill: 123456'), 'the chosen paybill is printed')
-assert(html.includes('globecon-letterhead.png'), 'the invoice uses the Globecon letterhead')
+assert(html.includes('globecon-letterhead.jpg'), 'the invoice uses the Globecon letterhead')
 assert(html.includes('KES 63,800.00'), 'the total is printed')
 
 const text = invoicePlainText({

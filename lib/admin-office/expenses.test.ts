@@ -1,4 +1,12 @@
-import { centsToAmount, expenseFingerprint, formatExpenseKes, parseAmountText } from './expenses'
+import {
+  centsToAmount,
+  expenseFingerprint,
+  formatExpenseKes,
+  isStandardExpenseCategory,
+  mergeExpenseCategories,
+  parseAmountText,
+  STANDARD_EXPENSE_CATEGORIES,
+} from './expenses'
 
 function assert(condition: unknown, message: string) {
   if (!condition) throw new Error(message)
@@ -30,6 +38,19 @@ assert(
     receiptNo: '5623 & 5688',
   }),
   'the same expense matches regardless of spacing and case',
+)
+
+assert(STANDARD_EXPENSE_CATEGORIES.includes('Petty cash'), 'Petty cash is on the standard list')
+assert(STANDARD_EXPENSE_CATEGORIES.includes('Caffe Leo'), 'Caffe Leo is on the standard list')
+assert(isStandardExpenseCategory('KPLC'), 'KPLC is treated as standard')
+assert(
+  mergeExpenseCategories(['Office tea'], ['Google', null, 'Legacy label'])[0] === 'Petty cash',
+  'standard categories stay first',
+)
+assert(
+  mergeExpenseCategories(['Office tea'], ['Legacy label']).includes('Office tea') &&
+    mergeExpenseCategories(['Office tea'], ['Legacy label']).includes('Legacy label'),
+  'custom and legacy labels stay available for tidy-up',
 )
 
 console.log('expense tests passed')

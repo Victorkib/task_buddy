@@ -62,7 +62,7 @@ const letter = buildStaffLetter({
 assert(letter.includes('Juja Professional Centre'), 'letter uses the Juja address')
 assert(letter.includes('>01</span> | Purpose'), 'letter uses numbered sections')
 assert(letter.includes('5th October 2026'), 'letter dates read like a Globecon letter')
-assert(letter.includes('globecon-letterhead.png'), 'letter sits on the letterhead')
+assert(letter.includes('globecon-letterhead.jpg'), 'letter sits on the letterhead')
 const offer = buildOfferLetter({
   companyName: 'Globecon Convergence Solutions Limited',
   documentNumber: null,

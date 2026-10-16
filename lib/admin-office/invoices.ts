@@ -1,3 +1,4 @@
+import { letterheadSrc } from '@/lib/admin-office/letterhead'
 import { escapeHtml, globeconDate, GLOBECON_STATIONERY } from '@/lib/admin-office/letters'
 
 export type PaymentKind = 'bank' | 'paybill' | 'other'
@@ -99,6 +100,7 @@ export function amountWithinLimit(cents: number) {
 
 export function buildInvoiceHtml(input: {
   assetBase?: string
+  letterhead?: string
   documentNumber: string
   issueDate: string
   dueDate: string | null
@@ -114,7 +116,7 @@ export function buildInvoiceHtml(input: {
   notes: string | null
 }) {
   const totals = invoiceTotals(input.lines, input.vatEnabled, input.vatRateBps)
-  const src = `${(input.assetBase ?? '').replace(/\/$/, '')}/globecon-letterhead.png`
+  const src = input.letterhead ?? letterheadSrc(input.assetBase)
   const rows = input.lines
     .map((line) => {
       const amount = lineAmountCents(line.quantityHundredths, line.rateCents)
@@ -154,6 +156,7 @@ export function buildInvoiceHtml(input: {
       padding: 38mm 16mm 28mm; background: #fff url('${src}') no-repeat top center;
       background-size: 210mm 297mm; color: #1c2430;
       font-family: Calibri, "Segoe UI", Arial, sans-serif; font-size: 11pt; line-height: 1.4;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
     }
     h1 { margin: 0 0 4px; font-size: 20pt; color: #1a2f6b; letter-spacing: .04em; }
     .meta { display: flex; justify-content: space-between; gap: 24px; margin: 8px 0 16px; }
@@ -169,6 +172,11 @@ export function buildInvoiceHtml(input: {
     .pay { margin-top: 8px; }
     .pay pre { margin: 2px 0 0; font-family: Calibri, "Segoe UI", Arial, sans-serif; white-space: pre-wrap; }
     .notes { margin-top: 14px; }
+    h2 { margin: 18px 0 6px; font-size: 12pt; color: #1a2f6b; }
+    @media print {
+      html, body { background: #fff; }
+      .sheet { margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
   </style>
 </head>
 <body>

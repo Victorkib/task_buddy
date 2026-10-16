@@ -21,6 +21,7 @@ import type {
   OfficePerson,
   OfficeRequest,
 } from '@/lib/admin-office/types'
+import { mergeExpenseCategories } from '@/lib/admin-office/expenses'
 import { parsePaymentSnapshot } from '@/lib/admin-office/invoices'
 import { getDb } from '@/lib/db'
 import { isMailConfigured } from '@/lib/mail/send'
@@ -33,6 +34,7 @@ import {
   officeCompliance,
   officeDocuments,
   officeClients,
+  officeExpenseCategories,
   officeExpenses,
   officeInvoiceSettings,
   officeInvoices,
@@ -72,6 +74,7 @@ function unavailableDesk(user: OfficeViewer, message: string): OfficeDesk {
     offers: [],
     documents: [],
     expenses: [],
+    expenseCategories: [],
     invoiceSettings: { vatEnabled: true, vatRateBps: 1600, companyPin: null },
     paymentAccounts: [],
     clients: [],
@@ -287,7 +290,7 @@ async function loadOfficeDesk(user: OfficeViewer): Promise<OfficeDesk> {
       .onConflictDoNothing()
   }
 
-  const [peopleRows, requestRows, offerRows, documentRows, ackRows, expenseRows, vendorRows, assetRows, complianceRows, departmentRows, invoiceSettings, paymentRows, clientRows, invoiceRows] =
+  const [peopleRows, requestRows, offerRows, documentRows, ackRows, expenseRows, expenseCategoryRows, vendorRows, assetRows, complianceRows, departmentRows, invoiceSettings, paymentRows, clientRows, invoiceRows] =
     await Promise.all([
       db.query.users.findMany({
         where: eq(users.companyId, user.companyId),
@@ -319,6 +322,12 @@ async function loadOfficeDesk(user: OfficeViewer): Promise<OfficeDesk> {
         ? db.query.officeExpenses.findMany({
             where: eq(officeExpenses.companyId, user.companyId),
             orderBy: [asc(officeExpenses.spentOn), asc(officeExpenses.createdAt)],
+          })
+        : Promise.resolve([]),
+      runsOffice
+        ? db.query.officeExpenseCategories.findMany({
+            where: eq(officeExpenseCategories.companyId, user.companyId),
+            orderBy: [asc(officeExpenseCategories.name)],
           })
         : Promise.resolve([]),
       runsOffice
@@ -663,6 +672,10 @@ async function loadOfficeDesk(user: OfficeViewer): Promise<OfficeDesk> {
       approvedBy: row.approvedBy,
       remarks: row.remarks,
     })),
+    expenseCategories: mergeExpenseCategories(
+      expenseCategoryRows.map((row) => row.name),
+      expenseRows.map((row) => row.category),
+    ),
     invoiceSettings: {
       vatEnabled: invoiceSettings?.vatEnabled ?? true,
       vatRateBps: invoiceSettings?.vatRateBps ?? 1600,

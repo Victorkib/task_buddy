@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import {
   deleteClient,
   deleteInvoice,
@@ -25,6 +25,7 @@ import {
 } from '@/lib/admin-office/invoices'
 import type { OfficeClient, OfficeDesk, OfficeInvoice, OfficePaymentAccount } from '@/lib/admin-office/types'
 import { Button } from '@/components/ui/button'
+import { X } from 'lucide-react'
 
 type Run = (
   action: () => Promise<{ error?: string; notice?: string; id?: string; clientId?: string | null } | void>,
@@ -133,13 +134,86 @@ function blankPayment(): { id: string; label: string; kind: 'bank' | 'paybill' |
   return { id: '', label: '', kind: 'bank', details: '', active: true }
 }
 
+type DrawerKind = 'invoice' | 'clients' | 'payments' | null
+
+function OfficeDrawer({
+  title,
+  subtitle,
+  onClose,
+  children,
+}: {
+  title: string
+  subtitle?: string
+  onClose: () => void
+  children: ReactNode
+}) {
+  const panelRef = useRef<HTMLElement | null>(null)
+  const restoreFocusRef = useRef<HTMLElement | null>(null)
+  const headingId = useId()
+
+  useEffect(() => {
+    restoreFocusRef.current = document.activeElement as HTMLElement | null
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    panelRef.current?.focus()
+    return () => {
+      document.body.style.overflow = previousOverflow
+      restoreFocusRef.current?.focus?.()
+    }
+  }, [])
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        onClose()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => document.removeEventListener('keydown', onKeyDown, true)
+  }, [onClose])
+
+  return (
+    <div className="drawer-scrim" role="presentation" onMouseDown={onClose}>
+      <aside
+        ref={panelRef}
+        className="dept-drawer office-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={headingId}
+        tabIndex={-1}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="dept-drawer-head">
+          <div className="dept-drawer-title">
+            <h2 id={headingId}>{title}</h2>
+            {subtitle ? <p>{subtitle}</p> : null}
+          </div>
+          <button type="button" className="close-button" aria-label="Close" onClick={onClose}>
+            <X aria-hidden="true" />
+          </button>
+        </header>
+        <div className="dept-drawer-body office-drawer-body">{children}</div>
+      </aside>
+    </div>
+  )
+}
+
 export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pending: boolean; run: Run }) {
-  const [view, setView] = useState<'invoices' | 'clients' | 'payments'>('invoices')
-  const [composer, setComposer] = useState(false)
+  const [drawer, setDrawer] = useState<DrawerKind>(null)
   const [form, setForm] = useState<InvoiceForm>(() => blankInvoice(desk))
   const [clientForm, setClientForm] = useState(blankClient)
   const [paymentForm, setPaymentForm] = useState(blankPayment)
   const saved = desk.invoices.find((invoice) => invoice.id === form.id) ?? null
+
+  function openInvoice(next: InvoiceForm) {
+    setForm(next)
+    setDrawer('invoice')
+  }
+
+  function closeDrawer() {
+    setDrawer(null)
+  }
 
   const totals = useMemo(() => {
     const rate = parseVatRate(form.vatRate || '0')
@@ -252,69 +326,59 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
     <div className="invoice-book">
       <header className="office-module-head">
         <div>
-          <h2>{view === 'clients' ? 'Clients' : view === 'payments' ? 'VAT and payment details' : 'Invoices'}</h2>
+          <h2>Invoices</h2>
           <p className="office-summary">
-            {view === 'invoices'
-              ? `${desk.invoices.length} saved${overdue.length ? ` · ${overdue.length} past the due date` : ''}`
-              : view === 'clients'
-                ? 'Saved clients can be picked on the next invoice.'
-                : 'The rate, PIN, and ways to pay start each new invoice. Change them whenever they change.'}
+            {desk.invoices.length} saved{overdue.length ? ` · ${overdue.length} past the due date` : ''}
           </p>
         </div>
         <div className="office-module-actions">
-          {view !== 'invoices' ? <button type="button" className="office-quiet" onClick={() => setView('invoices')}>Back to invoices</button> : null}
-          <Button type="button" className="create-button" onClick={() => { setView('invoices'); setForm(blankInvoice(desk)); setComposer(true) }}>New invoice</Button>
-          <button type="button" className={`office-quiet${view === 'clients' ? ' selected' : ''}`} onClick={() => setView('clients')}>Clients</button>
-          <button type="button" className={`office-quiet${view === 'payments' ? ' selected' : ''}`} onClick={() => setView('payments')}>VAT and payment details</button>
+          <Button type="button" className="create-button" onClick={() => openInvoice(blankInvoice(desk))}>
+            New invoice
+          </Button>
+          <button type="button" className={`office-quiet${drawer === 'clients' ? ' selected' : ''}`} onClick={() => setDrawer('clients')}>
+            Clients
+          </button>
+          <button type="button" className={`office-quiet${drawer === 'payments' ? ' selected' : ''}`} onClick={() => setDrawer('payments')}>
+            VAT and payment details
+          </button>
         </div>
       </header>
 
-      {view === 'payments' ? (
-        <PaymentsView
-          desk={desk}
-          pending={pending}
-          form={paymentForm}
-          setForm={setPaymentForm}
-          run={run}
-        />
-      ) : null}
+      <div className="panel office-record">
+        {desk.invoices.length === 0 ? <p className="empty-state">No invoices yet. Start one when you are ready to bill a client.</p> : null}
+        <ul className="invoice-list">
+          {desk.invoices.map((invoice) => {
+            const total = invoiceTotals(invoice.lines, invoice.vatEnabled, invoice.vatRateBps)
+            const late = invoice.status === 'sent' && invoice.dueDate != null && invoice.dueDate < desk.today
+            return (
+              <li key={invoice.id}>
+                <button
+                  type="button"
+                  className={form.id === invoice.id && drawer === 'invoice' ? 'selected' : ''}
+                  onClick={() => openInvoice(formFromInvoice(invoice))}
+                >
+                  <strong>{invoice.documentNumber ?? 'Draft'}</strong>
+                  <span>{invoice.clientName}</span>
+                  <em>
+                    <i className={`office-chip office-chip-${late || invoice.status === 'void' ? 'attention' : invoice.status === 'paid' ? 'good' : 'calm'}`}>
+                      {late ? 'Overdue' : STATUS_LABEL[invoice.status]}
+                    </i>
+                    {formatMoney(total.totalCents)}
+                  </em>
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      </div>
 
-      {view === 'clients' ? (
-        <ClientsView desk={desk} pending={pending} form={clientForm} setForm={setClientForm} run={run} />
-      ) : null}
-
-      {view === 'invoices' ? (
-        <div className="office-work">
-          <div className="panel office-record">
-            {desk.invoices.length === 0 ? <p className="empty-state">No invoices yet. Start one when you are ready to bill a client.</p> : null}
-            <ul className="invoice-list">
-              {desk.invoices.map((invoice) => {
-                const total = invoiceTotals(invoice.lines, invoice.vatEnabled, invoice.vatRateBps)
-                const late = invoice.status === 'sent' && invoice.dueDate != null && invoice.dueDate < desk.today
-                return (
-                  <li key={invoice.id}>
-                    <button type="button" className={form.id === invoice.id && composer ? 'selected' : ''} onClick={() => { setForm(formFromInvoice(invoice)); setComposer(true) }}>
-                      <strong>{invoice.documentNumber ?? 'Draft'}</strong>
-                      <span>{invoice.clientName}</span>
-                      <em>
-                        <i className={`office-chip office-chip-${late || invoice.status === 'void' ? 'attention' : invoice.status === 'paid' ? 'good' : 'calm'}`}>{late ? 'Overdue' : STATUS_LABEL[invoice.status]}</i>
-                        {formatMoney(total.totalCents)}
-                      </em>
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          </div>
-          {composer ? (
-          <form className="office-sheet" onSubmit={submitInvoice}>
-            <div className="office-sheet-head">
-              <div>
-                <h2>{saved?.documentNumber ?? 'New invoice'}</h2>
-                <span className={`office-chip office-chip-${saved?.status === 'paid' ? 'good' : saved?.status === 'void' ? 'attention' : 'calm'}`}>{saved ? STATUS_LABEL[saved.status] : 'Not saved yet'}</span>
-              </div>
-              <button type="button" onClick={() => { setComposer(false); setForm(blankInvoice(desk)) }}>Close</button>
-            </div>
+      {drawer === 'invoice' ? (
+        <OfficeDrawer
+          title={saved?.documentNumber ?? 'New invoice'}
+          subtitle={saved ? STATUS_LABEL[saved.status] : 'Not saved yet'}
+          onClose={closeDrawer}
+        >
+          <form className="office-drawer-form" onSubmit={submitInvoice}>
             <p className="field-hint">
               Clients are saved, so the next invoice can start from the same company. You can still change the name, email, address, or their PIN on this invoice alone.
             </p>
@@ -467,7 +531,10 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
                       }
                     />
                     {account.label}
-                    <em>{account.kind === 'paybill' ? 'Paybill' : account.kind === 'bank' ? 'Bank' : 'Other'}{account.active ? '' : ' · paused'}</em>
+                    <em>
+                      {account.kind === 'paybill' ? 'Paybill' : account.kind === 'bank' ? 'Bank' : 'Other'}
+                      {account.active ? '' : ' · paused'}
+                    </em>
                   </label>
                 ))
               )}
@@ -489,7 +556,7 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
               <Button type="submit" disabled={pending || saved?.status === 'void'}>
                 {form.id ? 'Save invoice' : 'Save draft'}
               </Button>
-              <Button type="button" variant="outline" disabled={pending} onClick={() => setForm(blankInvoice(desk))}>
+              <Button type="button" variant="outline" disabled={pending} onClick={() => openInvoice(blankInvoice(desk))}>
                 New invoice
               </Button>
               {saved?.status === 'draft' ? (
@@ -499,7 +566,10 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
                   disabled={pending}
                   onClick={() => {
                     if (!window.confirm('Delete this draft?')) return
-                    run(() => deleteInvoice(saved.id), 'Draft deleted.', () => setForm(blankInvoice(desk)))
+                    run(() => deleteInvoice(saved.id), 'Draft deleted.', () => {
+                      setForm(blankInvoice(desk))
+                      closeDrawer()
+                    })
                   }}
                 >
                   Delete draft
@@ -511,7 +581,7 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
             {saved ? (
               <div className="invoice-send">
                 <h3>Send or download</h3>
-                <p>These use the saved invoice. Save first if you have just changed it.</p>
+                <p>These use the saved invoice. Save first if you have just changed it. Downloads keep the Globecon letterhead on the page.</p>
                 <div className="row-actions">
                   <Button type="button" variant="outline" disabled={pending} onClick={() => openFile('print')}>
                     Print or save PDF
@@ -572,8 +642,19 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
               </div>
             ) : null}
           </form>
-          ) : null}
-        </div>
+        </OfficeDrawer>
+      ) : null}
+
+      {drawer === 'clients' ? (
+        <OfficeDrawer title="Clients" subtitle="Saved clients can be picked on the next invoice." onClose={closeDrawer}>
+          <ClientsView desk={desk} pending={pending} form={clientForm} setForm={setClientForm} run={run} />
+        </OfficeDrawer>
+      ) : null}
+
+      {drawer === 'payments' ? (
+        <OfficeDrawer title="VAT and payment details" subtitle="Starting values for new invoices." onClose={closeDrawer}>
+          <PaymentsView desk={desk} pending={pending} form={paymentForm} setForm={setPaymentForm} run={run} />
+        </OfficeDrawer>
       ) : null}
     </div>
   )
@@ -610,7 +691,7 @@ function PaymentsView({
   }
 
   return (
-    <div className="office-work">
+    <div className="office-drawer-stack">
       <form className="card" key={`${desk.invoiceSettings.vatEnabled}-${desk.invoiceSettings.vatRateBps}-${desk.invoiceSettings.companyPin ?? ''}`} onSubmit={submitSettings}>
         <div className="card-head">
           <strong>VAT and company PIN</strong>
@@ -738,7 +819,7 @@ function ClientsView({
   }
 
   return (
-    <div className="office-work">
+    <div className="office-drawer-stack">
       <form className="card" onSubmit={submit}>
         <div className="card-head">
           <strong>{form.id ? 'Edit client' : 'New client'}</strong>

@@ -115,6 +115,7 @@ export function AdminOfficeDesk({
   const active = tabs.some((tab) => tab[0] === requested) ? requested! : tabs[0][0]
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [busyLabel, setBusyLabel] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
 
   function openDesk(tab: string) {
@@ -128,18 +129,24 @@ export function AdminOfficeDesk({
     action: () => Promise<{ error?: string; notice?: string; id?: string; clientId?: string | null } | void | { html?: string }>,
     fallback: string,
     onSuccess?: (result?: { id?: string; clientId?: string | null; html?: string; notice?: string }) => void,
+    busy = 'Working…',
   ) {
     setError(null)
     setNotice(null)
+    setBusyLabel(busy)
     startTransition(async () => {
-      const result = await action()
-      if (result && 'error' in result && result.error) {
-        setError(result.error)
-        return
+      try {
+        const result = await action()
+        if (result && 'error' in result && result.error) {
+          setError(result.error)
+          return
+        }
+        setNotice((result && 'notice' in result && result.notice) || fallback)
+        onSuccess?.(result && typeof result === 'object' ? result : undefined)
+        router.refresh()
+      } finally {
+        setBusyLabel(null)
       }
-      setNotice((result && 'notice' in result && result.notice) || fallback)
-      onSuccess?.(result && typeof result === 'object' ? result : undefined)
-      router.refresh()
     })
   }
 
@@ -158,10 +165,16 @@ export function AdminOfficeDesk({
           </div>
         ))}
       </nav>
-      <div className="office-stage">
+      <div className="office-stage" aria-busy={pending}>
       {desk.setupMessage ? <p className="form-error">{desk.setupMessage}</p> : null}
       {error ? <p className="form-error">{error}</p> : null}
       {notice ? <p className="form-success">{notice}</p> : null}
+      {pending && busyLabel ? (
+        <p className="office-busy" role="status" aria-live="polite">
+          <span className="office-busy-spinner" aria-hidden="true" />
+          {busyLabel}
+        </p>
+      ) : null}
       {active === 'today' && mode === 'admin' ? <TodayPanel desk={desk} onOpen={openDesk} /> : null}
       {active === 'inbox' && mode === 'admin' ? (
         <InboxPanel
@@ -179,7 +192,7 @@ export function AdminOfficeDesk({
         <OffersPanel desk={desk} pending={pending} canIssue={canIssueOffers} onSave={(formData) => run(() => saveOffer(formData), 'Draft saved.')} onDecide={(id, decision) => run(() => decideOffer(id, decision), 'Offer updated.')} />
       ) : null}
       {active === 'finance' && mode === 'admin' ? (
-        <ExpensesPanel desk={desk} colleagues={colleagues} pending={pending} run={run} />
+        <ExpensesPanel desk={desk} colleagues={colleagues} pending={pending} busyLabel={busyLabel} run={run} />
       ) : null}
       {active === 'invoices' && mode === 'admin' ? <InvoicesPanel desk={desk} pending={pending} run={run} /> : null}
       {active === 'documents' && mode === 'admin' ? (

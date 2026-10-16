@@ -155,6 +155,13 @@
       "when": 1791970000000,
       "tag": "0021_office_invoices",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1792200000000,
+      "tag": "0022_office_expense_categories",
+      "breakpoints": true
     }
   ]
 }

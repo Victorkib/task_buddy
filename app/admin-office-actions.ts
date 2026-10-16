@@ -12,7 +12,13 @@ import {
 } from '@/lib/auth/permissions'
 import { addCadence, addDaysIso, annualAvailableHundredths, isIsoDate, leaveSpanHundredths, nairobiToday, rangesOverlap } from '@/lib/admin-office/leave'
 import { readExpenseWorkbook, writeExpenseWorkbook } from '@/lib/admin-office/expense-workbook'
-import { expenseFingerprint, parseAmountText, type ExpenseDraft } from '@/lib/admin-office/expenses'
+import {
+  cleanExpenseCategory,
+  expenseFingerprint,
+  isStandardExpenseCategory,
+  parseAmountText,
+  type ExpenseDraft,
+} from '@/lib/admin-office/expenses'
 import {
   amountWithinLimit,
   buildInvoiceHtml,
@@ -28,6 +34,7 @@ import {
   type PaymentKind,
 } from '@/lib/admin-office/invoices'
 import { buildOfferLetter, buildStaffLetter } from '@/lib/admin-office/letters'
+import { embeddedLetterheadSrc } from '@/lib/admin-office/letterhead-embed'
 import {
   CARRY_CAP_HUNDREDTHS,
   defaultEmployment,
@@ -52,6 +59,7 @@ import {
   officeCompliance,
   officeDocuments,
   officeClients,
+  officeExpenseCategories,
   officeExpenses,
   officeInvoiceLines,
   officeInvoiceSettings,
@@ -276,7 +284,7 @@ export async function submitAdminRequest(formData: FormData) {
       startDate: profile.startDate,
       purpose: description || null,
       today: nairobiToday(),
-      assetBase: getPublicAppUrl(),
+      letterhead: embeddedLetterheadSrc(),
     })
   } else if (kind === 'imprest' || kind === 'purchase') {
     const amount = readInt(field(formData, 'amountKes').replace(/,/g, ''), 1, 50_000_000)
@@ -377,7 +385,7 @@ export async function previewStaffLetter(formData: FormData) {
     startDate: profile.startDate,
     purpose: cleanBlock(field(formData, 'description'), 2000) || null,
     today: nairobiToday(),
-    assetBase: getPublicAppUrl(),
+    letterhead: embeddedLetterheadSrc(),
   })
   return { html }
 }
@@ -577,7 +585,7 @@ export async function decideAdminRequest(requestId: string, decision: 'approve' 
       startDate: profile?.startDate ?? null,
       purpose: request.description,
       today: nairobiToday(),
-      assetBase: getPublicAppUrl(),
+      letterhead: embeddedLetterheadSrc(),
     })
   }
 
@@ -771,7 +779,7 @@ export async function saveOffer(formData: FormData) {
     probationMonths,
     notes: notes || null,
     today: nairobiToday(),
-    assetBase: getPublicAppUrl(),
+    letterhead: embeddedLetterheadSrc(),
   })
   const [created] = await getDb()
     .insert(offerLetters)
@@ -839,7 +847,7 @@ export async function decideOffer(offerId: string, decision: 'send' | 'issue' | 
       probationMonths: offer.probationMonths,
       notes: offer.notes,
       today: nairobiToday(),
-      assetBase: getPublicAppUrl(),
+      letterhead: embeddedLetterheadSrc(),
     })
     await getDb()
       .update(offerLetters)
@@ -1079,7 +1087,7 @@ function expenseFromForm(formData: FormData) {
     voucherNo: cleanBlock(field(formData, 'voucherNo'), 40),
     description,
     paidTo,
-    category: cleanBlock(field(formData, 'category'), 80),
+    category: cleanExpenseCategory(field(formData, 'category')),
     amountCents,
     paymentMethod: cleanBlock(field(formData, 'paymentMethod'), 40),
     receiptNo: cleanBlock(field(formData, 'receiptNo'), 80),
@@ -1214,6 +1222,89 @@ export async function exportExpenses() {
   return { ok: true as const, filename: 'expenses-petty-cash.xlsx', base64: file.toString('base64') }
 }
 
+export async function saveExpenseCategory(formData: FormData) {
+  const loaded = await actor()
+  if ('error' in loaded) return loaded
+  const { currentUser } = loaded
+  if (!canRunAdminOffice(currentUser)) return { error: 'Only the admin office can add expense categories.' }
+  const name = cleanExpenseCategory(field(formData, 'name'))
+  if (!name) return { error: 'Give the category a name.' as const }
+  if (isStandardExpenseCategory(name)) {
+    return { ok: true as const, notice: `${name} is already one of the standard categories.`, name }
+  }
+  const existing = await getDb().query.officeExpenseCategories.findFirst({
+    where: and(eq(officeExpenseCategories.companyId, currentUser.companyId), eq(officeExpenseCategories.name, name)),
+  })
+  if (existing) return { ok: true as const, notice: `${name} is already on the list.`, name }
+  await getDb().insert(officeExpenseCategories).values({ companyId: currentUser.companyId, name })
+  refresh()
+  return { ok: true as const, notice: `Added category “${name}”.`, name }
+}
+
+export async function deleteExpenseCategory(name: string) {
+  const loaded = await actor()
+  if ('error' in loaded) return loaded
+  const { currentUser } = loaded
+  if (!canRunAdminOffice(currentUser)) return { error: 'Only the admin office can remove expense categories.' }
+  const cleaned = cleanExpenseCategory(name)
+  if (!cleaned) return { error: 'That category is not on the list.' as const }
+  if (isStandardExpenseCategory(cleaned)) return { error: 'The standard categories stay on the list.' as const }
+  await getDb()
+    .delete(officeExpenseCategories)
+    .where(and(eq(officeExpenseCategories.companyId, currentUser.companyId), eq(officeExpenseCategories.name, cleaned)))
+  refresh()
+  return { ok: true as const, notice: `Removed “${cleaned}” from the category list. Expenses that already use it keep that label until you move them.` }
+}
+
+export async function reassignExpenseCategories(formData: FormData) {
+  const loaded = await actor()
+  if ('error' in loaded) return loaded
+  const { currentUser } = loaded
+  if (!canRunAdminOffice(currentUser)) return { error: 'Only the admin office can change expense categories.' }
+  const target = cleanExpenseCategory(field(formData, 'toCategory'))
+  if (!target) return { error: 'Choose the category to move these expenses into.' as const }
+  const mode = field(formData, 'mode')
+  const db = getDb()
+  let ids: string[] = []
+
+  if (mode === 'from') {
+    const fromCategory = field(formData, 'fromCategory')
+    const rows = await db.select({ id: officeExpenses.id, category: officeExpenses.category }).from(officeExpenses).where(eq(officeExpenses.companyId, currentUser.companyId))
+    ids = rows
+      .filter((row) => (fromCategory === '__none__' ? !row.category : (row.category ?? '') === fromCategory))
+      .map((row) => row.id)
+  } else {
+    ids = formData.getAll('expenseId').filter((value): value is string => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value))
+    if (ids.length === 0) return { error: 'Tick the expenses you want to move, or choose “everything in a category”.' as const }
+    const owned = await db
+      .select({ id: officeExpenses.id })
+      .from(officeExpenses)
+      .where(and(eq(officeExpenses.companyId, currentUser.companyId), inArray(officeExpenses.id, ids)))
+    if (owned.length !== new Set(ids).size) return { error: 'One of those expenses is no longer in the book. Refresh and try again.' }
+    ids = owned.map((row) => row.id)
+  }
+
+  if (ids.length === 0) return { error: 'No expenses matched that selection.' as const }
+  if (!isStandardExpenseCategory(target)) {
+    const custom = await db.query.officeExpenseCategories.findFirst({
+      where: and(eq(officeExpenseCategories.companyId, currentUser.companyId), eq(officeExpenseCategories.name, target)),
+    })
+    if (!custom) {
+      await db.insert(officeExpenseCategories).values({ companyId: currentUser.companyId, name: target })
+    }
+  }
+  await db
+    .update(officeExpenses)
+    .set({ category: target, updatedAt: new Date() })
+    .where(and(eq(officeExpenses.companyId, currentUser.companyId), inArray(officeExpenses.id, ids)))
+  refresh()
+  return {
+    ok: true as const,
+    notice: `Moved ${ids.length} expense${ids.length === 1 ? '' : 's'} to “${target}”.`,
+    count: ids.length,
+  }
+}
+
 const PAYMENT_KINDS = new Set<PaymentKind>(['bank', 'paybill', 'other'])
 const INVOICE_STATUSES = new Set(['draft', 'sent', 'paid', 'void'])
 
@@ -1264,6 +1355,7 @@ function invoiceFile(invoice: {
     clientEmail: invoice.clientEmail,
     clientAddress: invoice.clientAddress,
     clientPin: invoice.clientPin,
+    letterhead: embeddedLetterheadSrc(),
   })
   const filename = `${(invoice.documentNumber ?? 'invoice').replace(/[^\w.-]+/g, '-')}.html`
   return { html, filename, text: invoicePlainText(shared), subject: `Invoice ${shared.documentNumber} from Globecon Convergence Solutions` }
