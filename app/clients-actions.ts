@@ -4,9 +4,7 @@ import { and, eq } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 import {
   canAccessClientManagement,
-  canManageClientBilling,
-  canManageCurriculum,
-  isManagement,
+  resolveClientCapabilities,
 } from '@/lib/auth/permissions'
 import {
   isClientKind,
@@ -20,11 +18,11 @@ import { getDb } from '@/lib/db'
 import {
   clientsExist,
   ensureProgrammeLeads,
-  isAcademyProgrammeLead,
   listAcademyLeadProgrammeIds,
   programmeExists,
   replaceClientLinks,
 } from '@/lib/db/clients'
+import { getUserModuleGrant } from '@/lib/db/module-access'
 import { getCurrentUser } from '@/lib/db/queries'
 import { academyProgrammes, officeClients, users } from '@/lib/db/schema'
 
@@ -48,26 +46,43 @@ function emailOrEmpty(value: string) {
   return trimmed.slice(0, 200)
 }
 
-async function clientsGate(options?: { curriculum?: boolean; billing?: boolean }) {
+async function clientsGate(options?: {
+  curriculum?: boolean
+  create?: boolean
+  update?: boolean
+  delete?: boolean
+}) {
   const currentUser = await getCurrentUser()
   if (!currentUser) return { ok: false as const, error: 'Not signed in.' }
-  const academyLead = await isAcademyProgrammeLead(currentUser)
-  if (!canAccessClientManagement(currentUser, academyLead)) {
+  const [leadProgrammeIds, grant] = await Promise.all([
+    listAcademyLeadProgrammeIds(currentUser.id, currentUser.companyId),
+    getUserModuleGrant(currentUser.companyId, currentUser.id, 'clients'),
+  ])
+  const academyLead = leadProgrammeIds.length > 0
+  const accessCtx = { isAcademyLead: academyLead, grant }
+  if (!canAccessClientManagement(currentUser, accessCtx)) {
     return { ok: false as const, error: 'You are not allowed to open client management.' }
   }
-  if (options?.curriculum && !canManageCurriculum(currentUser)) {
-    return { ok: false as const, error: 'Only leadership can change curriculum and programme leads.' }
+  const capabilities = resolveClientCapabilities(currentUser, accessCtx)
+  if (options?.curriculum && !capabilities.canManageCurriculum) {
+    return { ok: false as const, error: 'You are not allowed to change curriculum and programme leads.' }
   }
-  if (options?.billing && !canManageClientBilling(currentUser) && !isManagement(currentUser)) {
-    return { ok: false as const, error: 'Only finance or leadership can change commercial client billing records.' }
+  if (options?.create && !capabilities.canCreate) {
+    return { ok: false as const, error: 'You are not allowed to create client records.' }
   }
-  const leadProgrammeIds = await listAcademyLeadProgrammeIds(currentUser.id, currentUser.companyId)
+  if (options?.update && !capabilities.canUpdate) {
+    return { ok: false as const, error: 'You are not allowed to edit client records.' }
+  }
+  if (options?.delete && !capabilities.canDelete) {
+    return { ok: false as const, error: 'You are not allowed to remove client records.' }
+  }
   return {
     ok: true as const,
     currentUser,
     academyLead,
     leadProgrammeIds,
-    fullAccess: canManageClientBilling(currentUser) || isManagement(currentUser),
+    capabilities,
+    fullAccess: capabilities.fullDirectory && !capabilities.academyScoped,
   }
 }
 
@@ -77,9 +92,10 @@ function defaultStatusForKind(kind: ClientKind): ClientStatus {
 }
 
 export async function saveClientRecord(formData: FormData) {
-  const loaded = await clientsGate()
+  const id = field(formData, 'id')
+  const loaded = await clientsGate(id ? { update: true } : { create: true })
   if (!loaded.ok) return { error: loaded.error }
-  const { currentUser, fullAccess, leadProgrammeIds } = loaded
+  const { currentUser, fullAccess, leadProgrammeIds, capabilities } = loaded
 
   const name = cleanBlock(field(formData, 'name'), 200)
   if (!name) return { error: 'Enter a name.' as const }
@@ -103,10 +119,10 @@ export async function saveClientRecord(formData: FormData) {
   }
 
   if (!fullAccess) {
-    if (kind === 'organization' || kind === 'individual') {
-      return { error: 'Academy leads manage students and guardians here. Ask finance for commercial clients.' as const }
+    if ((kind === 'organization' || kind === 'individual') && !capabilities.fullDirectory) {
+      return { error: 'You are not allowed to manage commercial clients. Ask leadership for directory access.' as const }
     }
-    if (kind === 'student' && programmeId && !leadProgrammeIds.includes(programmeId)) {
+    if (capabilities.academyScoped && kind === 'student' && programmeId && !leadProgrammeIds.includes(programmeId)) {
       return { error: 'You can only manage students on programmes you lead.' as const }
     }
   }
@@ -131,14 +147,13 @@ export async function saveClientRecord(formData: FormData) {
     updatedAt: new Date(),
   }
 
-  const id = field(formData, 'id')
   let clientId = id
   if (id) {
     const existing = await getDb().query.officeClients.findFirst({ where: eq(officeClients.id, id) })
     if (!existing || existing.companyId !== currentUser.companyId) {
       return { error: 'That record is no longer saved.' as const }
     }
-    if (!fullAccess) {
+    if (!fullAccess && capabilities.academyScoped) {
       if (existing.kind === 'student' && existing.programmeId && !leadProgrammeIds.includes(existing.programmeId)) {
         return { error: 'You can only edit students on programmes you lead.' as const }
       }
@@ -187,15 +202,15 @@ export async function saveClientRecord(formData: FormData) {
 }
 
 export async function deleteClientRecord(id: string) {
-  const loaded = await clientsGate()
+  const loaded = await clientsGate({ delete: true })
   if (!loaded.ok) return { error: loaded.error }
-  const { currentUser, fullAccess, leadProgrammeIds } = loaded
+  const { currentUser, fullAccess, leadProgrammeIds, capabilities } = loaded
   const existing = await getDb().query.officeClients.findFirst({ where: eq(officeClients.id, id) })
   if (!existing || existing.companyId !== currentUser.companyId) {
     return { error: 'That record is no longer saved.' as const }
   }
-  if (!fullAccess) {
-    if (existing.kind !== 'student' && existing.kind !== 'guardian') {
+  if (!fullAccess && capabilities.academyScoped) {
+    if (existing.kind !== 'student' && existing.kind !== 'guardian' && !capabilities.fullDirectory) {
       return { error: 'You can only remove academy students or guardians.' as const }
     }
     if (existing.kind === 'student' && existing.programmeId && !leadProgrammeIds.includes(existing.programmeId)) {

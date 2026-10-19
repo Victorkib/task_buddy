@@ -1349,6 +1349,34 @@ export const academyProgrammeLeads = pgTable(
   ],
 )
 
+/** Leadership-assigned module access (e.g. Clients CRUD) beyond role defaults. */
+export const moduleAccessGrants = pgTable(
+  'module_access_grants',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    moduleKey: text('module_key').notNull(),
+    canView: boolean('can_view').notNull().default(true),
+    canCreate: boolean('can_create').notNull().default(false),
+    canUpdate: boolean('can_update').notNull().default(false),
+    canDelete: boolean('can_delete').notNull().default(false),
+    canManageCurriculum: boolean('can_manage_curriculum').notNull().default(false),
+    grantedById: uuid('granted_by_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('module_access_grants_unique').on(table.companyId, table.userId, table.moduleKey),
+    index('module_access_grants_user_idx').on(table.userId),
+    index('module_access_grants_company_idx').on(table.companyId),
+  ],
+)
+
 export const officeClients = pgTable(
   'office_clients',
   {
@@ -1470,6 +1498,20 @@ export const academyProgrammeLeadsRelations = relations(academyProgrammeLeads, (
     references: [academyProgrammes.id],
   }),
   user: one(users, { fields: [academyProgrammeLeads.userId], references: [users.id] }),
+}))
+
+export const moduleAccessGrantsRelations = relations(moduleAccessGrants, ({ one }) => ({
+  company: one(companies, { fields: [moduleAccessGrants.companyId], references: [companies.id] }),
+  user: one(users, {
+    fields: [moduleAccessGrants.userId],
+    references: [users.id],
+    relationName: 'moduleAccessGrantee',
+  }),
+  grantedBy: one(users, {
+    fields: [moduleAccessGrants.grantedById],
+    references: [users.id],
+    relationName: 'moduleAccessGrantor',
+  }),
 }))
 
 export const officeClientsRelations = relations(officeClients, ({ one, many }) => ({

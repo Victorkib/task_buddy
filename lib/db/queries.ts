@@ -22,6 +22,7 @@ import { isOverdue } from '@/lib/format'
 import type { CurrentUser } from '@/lib/types'
 import { ensureNotificationPreferences, syncDeadlineAlertsForUser } from '@/lib/notifications/sync-alerts'
 import {
+  canAssignModuleAccess,
   canCreateWork,
   canManageOrg,
   canSeeProject,
@@ -29,9 +30,11 @@ import {
   isDepartmentLeader,
   isManagement,
 } from '@/lib/auth/permissions'
+import { listModuleAccessGrants } from '@/lib/db/module-access'
 import { buildReport } from '@/lib/reporting/build-report'
 import { projectAccessFromRow, taskAccessFromRow } from '@/lib/db/task-access'
 import { toCollaborator, toLinkedTaskView } from '@/lib/task-collaboration'
+import type { ModuleAccessGrantRecord } from '@/lib/modules/catalog'
 
 
 export async function getCompany() {
@@ -657,21 +660,23 @@ export async function listRoles() {
 
 export async function getSettingsData(viewer?: CurrentUser | null) {
   const currentUser = viewer ?? (await getCurrentUser())
+  const emptyGrants: ModuleAccessGrantRecord[] = []
   if (!currentUser) {
-    return { company: null, people: [], roles: [], departments: [], teams: [] }
+    return { company: null, people: [], roles: [], departments: [], teams: [], moduleGrants: emptyGrants }
   }
 
   const canSeeStructure = isManagement(currentUser) || isDepartmentLeader(currentUser) || canManageOrg(currentUser)
   if (!canSeeStructure) {
-    return { company: null, people: [], roles: [], departments: [], teams: [] }
+    return { company: null, people: [], roles: [], departments: [], teams: [], moduleGrants: emptyGrants }
   }
 
-  const [company, people, roleRows, departmentRows, teamRows] = await Promise.all([
+  const [company, people, roleRows, departmentRows, teamRows, moduleGrants] = await Promise.all([
     getCompany(),
     listPeople(currentUser),
     listRoles(),
     getDb().query.departments.findMany({ with: { owner: true }, orderBy: [asc(departments.name)] }),
     getDb().query.teams.findMany({ with: { department: true }, orderBy: [asc(teams.name)] }),
+    canAssignModuleAccess(currentUser) ? listModuleAccessGrants(currentUser.companyId) : Promise.resolve(emptyGrants),
   ])
 
   const departmentsScoped = isManagement(currentUser)
@@ -687,6 +692,7 @@ export async function getSettingsData(viewer?: CurrentUser | null) {
     roles: roleRows,
     departments: departmentsScoped,
     teams: teamsScoped,
+    moduleGrants,
   }
 }
 

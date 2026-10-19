@@ -1,3 +1,6 @@
+import type { ModuleCapability } from '@/lib/modules/catalog'
+import { EMPTY_MODULE_CAPABILITY } from '@/lib/modules/catalog'
+
 export type RoleKey =
   | 'admin'
   | 'managing_director'
@@ -114,8 +117,9 @@ export function canRunAdminOffice(user: Actor) {
 }
 
 /** High-level admins set GCS Academy programmes and assign ops leads. */
-export function canManageCurriculum(user: Actor) {
-  return isManagement(user)
+export function canManageCurriculum(user: Actor, grant?: ModuleCapability | null) {
+  if (isManagement(user)) return true
+  return Boolean(grant?.canManageCurriculum)
 }
 
 /** Finance desk or management — full client directory + billing parties. */
@@ -123,15 +127,69 @@ export function canManageClientBilling(user: Actor) {
   return canRunAdminOffice(user)
 }
 
+/** Leadership may grant module access (Clients, etc.) in Settings. */
+export function canAssignModuleAccess(user: Actor) {
+  return isManagement(user)
+}
+
+export type ClientAccessContext = {
+  isAcademyLead?: boolean
+  grant?: ModuleCapability | null
+}
+
 /**
  * Client management portal access.
- * Pass `isAcademyLead` when the viewer is assigned on any academy programme.
+ * Role defaults (finance / management / academy lead) or an explicit Settings grant.
  */
-export function canAccessClientManagement(user: Actor, isAcademyLead = false) {
+export function canAccessClientManagement(user: Actor, context: ClientAccessContext | boolean = {}) {
   if (!user) return false
+  const ctx: ClientAccessContext = typeof context === 'boolean' ? { isAcademyLead: context } : context
   if (canManageClientBilling(user)) return true
   if (isManagement(user)) return true
-  return isAcademyLead
+  if (ctx.isAcademyLead) return true
+  return Boolean(ctx.grant?.canView)
+}
+
+export function resolveClientCapabilities(
+  user: Actor,
+  context: ClientAccessContext = {},
+): ModuleCapability & { fullDirectory: boolean; academyScoped: boolean } {
+  if (!user) {
+    return { ...EMPTY_MODULE_CAPABILITY, fullDirectory: false, academyScoped: false }
+  }
+  const grant = context.grant ?? EMPTY_MODULE_CAPABILITY
+  const roleFull = canManageClientBilling(user) || isManagement(user)
+  if (roleFull) {
+    return {
+      canView: true,
+      canCreate: true,
+      canUpdate: true,
+      canDelete: true,
+      canManageCurriculum: true,
+      fullDirectory: true,
+      academyScoped: false,
+    }
+  }
+  if (context.isAcademyLead) {
+    return {
+      canView: true,
+      canCreate: true,
+      canUpdate: true,
+      canDelete: true,
+      canManageCurriculum: Boolean(grant.canManageCurriculum),
+      fullDirectory: Boolean(grant.canView && (grant.canCreate || grant.canUpdate)),
+      academyScoped: true,
+    }
+  }
+  return {
+    canView: Boolean(grant.canView),
+    canCreate: Boolean(grant.canCreate),
+    canUpdate: Boolean(grant.canUpdate),
+    canDelete: Boolean(grant.canDelete),
+    canManageCurriculum: Boolean(grant.canManageCurriculum),
+    fullDirectory: Boolean(grant.canView),
+    academyScoped: false,
+  }
 }
 
 export function canManageStaffRecords(user: Actor) {

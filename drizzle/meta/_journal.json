@@ -176,6 +176,13 @@
       "when": 1792500000000,
       "tag": "0024_client_management",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1792600000000,
+      "tag": "0025_module_access_grants",
+      "breakpoints": true
     }
   ]
 }

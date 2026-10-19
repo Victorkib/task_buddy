@@ -74,6 +74,7 @@ export default async function Page({
           notificationPreferences={dashboardData.notificationPreferences as DashboardProps['notificationPreferences']}
           workspaceRoles={settings?.roles ?? []}
           workspaceTeams={settings?.teams ?? []}
+          moduleGrants={settings?.moduleGrants ?? []}
           companyName={companyName}
           companyShortName={companyShortName}
           officeDesk={officeDesk}

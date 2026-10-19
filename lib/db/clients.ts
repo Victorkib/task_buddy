@@ -2,9 +2,9 @@ import { and, asc, eq, inArray } from 'drizzle-orm'
 import {
   canAccessClientManagement,
   canManageClientBilling,
-  canManageCurriculum,
-  isManagement,
+  resolveClientCapabilities,
 } from '@/lib/auth/permissions'
+import { getUserModuleGrant } from '@/lib/db/module-access'
 import { parseTags } from '@/lib/clients/parse'
 import type {
   AcademyProgrammeRecord,
@@ -65,11 +65,16 @@ export async function isAcademyProgrammeLead(user: CurrentUser) {
 }
 
 export async function getClientDesk(user: CurrentUser): Promise<ClientDesk | null> {
-  const leadProgrammeIds = await listAcademyLeadProgrammeIds(user.id, user.companyId)
+  const [leadProgrammeIds, clientsGrant] = await Promise.all([
+    listAcademyLeadProgrammeIds(user.id, user.companyId),
+    getUserModuleGrant(user.companyId, user.id, 'clients'),
+  ])
   const academyLead = leadProgrammeIds.length > 0
-  if (!canAccessClientManagement(user, academyLead)) return null
+  const accessCtx = { isAcademyLead: academyLead, grant: clientsGrant }
+  if (!canAccessClientManagement(user, accessCtx)) return null
 
-  const fullAccess = canManageClientBilling(user) || isManagement(user)
+  const capabilities = resolveClientCapabilities(user, accessCtx)
+  const fullAccess = capabilities.fullDirectory && !capabilities.academyScoped
 
   const [programmeRows, clientRows, linkRows] = await Promise.all([
     getDb().query.academyProgrammes.findMany({
@@ -135,21 +140,25 @@ export async function getClientDesk(user: CurrentUser): Promise<ClientDesk | nul
   }))
 
   const visibleClients = clientRows.filter((row) => {
-    if (fullAccess) return true
-    if (row.kind === 'student') {
-      return Boolean(row.programmeId && leadProgrammeIds.includes(row.programmeId))
+    if (fullAccess || (capabilities.fullDirectory && !capabilities.academyScoped)) return true
+    if (capabilities.academyScoped) {
+      if (row.kind === 'student') {
+        return Boolean(row.programmeId && leadProgrammeIds.includes(row.programmeId))
+      }
+      if (row.kind === 'guardian') {
+        const links = linksByClient.get(row.id) ?? []
+        return links.some((link) => {
+          if (link.direction !== 'from') return false
+          if (link.relation !== 'guardian_of' && link.relation !== 'payer_for') return false
+          const student = clientById.get(link.otherId)
+          return Boolean(student?.programmeId && leadProgrammeIds.includes(student.programmeId))
+        })
+      }
+      // Granted fullDirectory on top of academy lead → also see commercial parties.
+      return capabilities.fullDirectory && (row.kind === 'organization' || row.kind === 'individual')
     }
-    if (row.kind === 'guardian') {
-      const links = linksByClient.get(row.id) ?? []
-      return links.some((link) => {
-        if (link.direction !== 'from') return false
-        if (link.relation !== 'guardian_of' && link.relation !== 'payer_for') return false
-        const student = clientById.get(link.otherId)
-        return Boolean(student?.programmeId && leadProgrammeIds.includes(student.programmeId))
-      })
-    }
-    // Academy leads do not see commercial org/individual directory by default.
-    return false
+    // Settings grant only (not academy-scoped): full directory of all kinds they can view.
+    return capabilities.fullDirectory
   })
 
   const clients: ClientRecord[] = visibleClients.map((row) => ({
@@ -176,10 +185,22 @@ export async function getClientDesk(user: CurrentUser): Promise<ClientDesk | nul
 
   return {
     clients,
-    programmes: fullAccess || canManageCurriculum(user) ? programmes : programmes.filter((p) => leadProgrammeIds.includes(p.id)),
-    canManageCurriculum: canManageCurriculum(user),
+    programmes:
+      fullAccess || capabilities.canManageCurriculum
+        ? programmes
+        : programmes.filter((p) => leadProgrammeIds.includes(p.id)),
+    canManageCurriculum: capabilities.canManageCurriculum,
     canManageBilling: canManageClientBilling(user),
     academyProgrammeIds: leadProgrammeIds,
+    capabilities: {
+      canView: capabilities.canView,
+      canCreate: capabilities.canCreate,
+      canUpdate: capabilities.canUpdate,
+      canDelete: capabilities.canDelete,
+      canManageCurriculum: capabilities.canManageCurriculum,
+      fullDirectory: capabilities.fullDirectory,
+      academyScoped: capabilities.academyScoped,
+    },
   }
 }
 

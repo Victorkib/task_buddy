@@ -2520,8 +2520,110 @@ html:has(.auth-shell) body { background: #020617; }
 }
 .clients-footnote svg { width: 18px; height: 18px; flex-shrink: 0; margin-top: 2px; color: #1a2f6b; }
 .inline-icon { width: 14px; height: 14px; display: inline; vertical-align: -2px; margin-right: 4px; }
+.clients-form-grid .category-field { display: flex; flex-direction: column; gap: 8px; }
+.clients-form-grid .category-field > label { display: flex; flex-direction: column; gap: 6px; font-size: 11px; font-weight: 700; }
+.clients-form-grid .category-custom { display: flex; flex-direction: column; gap: 6px; font-size: 11px; font-weight: 700; }
+.clients-form-grid.is-readonly input:disabled,
+.clients-form-grid.is-readonly select:disabled,
+.clients-form-grid.is-readonly textarea:disabled { opacity: .85; cursor: default; }
 @media (max-width: 980px) {
   .clients-layout, .clients-link-add, .clients-form-grid { grid-template-columns: 1fr; }
   .clients-span-2 { grid-column: auto; }
+}
+
+/* Settings → Module access */
+.module-access-panel { margin-top: 18px; }
+.module-access-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr);
+  gap: 18px;
+  align-items: start;
+}
+.module-access-editor { display: grid; gap: 14px; }
+.module-access-module-pills { display: flex; flex-wrap: wrap; gap: 8px; }
+.module-access-caps {
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in oklch, #1a2f6b 4%, var(--card));
+  display: grid;
+  gap: 10px;
+}
+.module-access-caps legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 750;
+}
+.module-access-caps legend svg { width: 15px; height: 15px; color: #1a2f6b; }
+.module-access-cap {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--background);
+  cursor: pointer;
+}
+.module-access-cap input { margin-top: 3px; }
+.module-access-cap strong { display: block; font-size: 13px; letter-spacing: -.01em; }
+.module-access-cap em {
+  display: block;
+  margin-top: 2px;
+  font-style: normal;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  line-height: 1.35;
+}
+.module-access-roster {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: color-mix(in oklch, #0f766e 3%, var(--card));
+}
+.module-access-roster header { display: flex; gap: 10px; align-items: flex-start; }
+.module-access-roster header svg { width: 18px; height: 18px; margin-top: 2px; color: #0f766e; }
+.module-access-roster header strong { display: block; font-size: 13px; }
+.module-access-roster header p { margin: 2px 0 0; font-size: 12px; color: var(--muted-foreground); line-height: 1.4; }
+.module-access-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.module-access-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+.module-access-person {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+  flex: 1;
+}
+.module-access-person strong { display: block; font-size: 13px; }
+.module-access-person em {
+  display: block;
+  margin-top: 2px;
+  font-style: normal;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.empty-state-compact { margin: 0; padding: 12px; font-size: 13px; }
+@media (max-width: 980px) {
+  .module-access-layout { grid-template-columns: 1fr; }
 }
 

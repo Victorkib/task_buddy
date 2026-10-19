@@ -9,6 +9,7 @@ import {
   CLIENT_KIND_LABELS,
   CLIENT_LINK_LABELS,
   CLIENT_STATUS_LABELS,
+  type AcademyProgrammeRecord,
   type ClientDesk,
   type ClientKind,
   type ClientLinkRelation,
@@ -16,6 +17,8 @@ import {
   type ClientStatus,
 } from '@/lib/clients/types'
 import type { Person } from '@/lib/types'
+
+const NEW_PROGRAMME_VALUE = '__new__'
 
 type Focus = 'directory' | 'students' | 'guardians' | 'curriculum'
 
@@ -107,26 +110,35 @@ export function ClientManagement({
   onRefresh?: () => void
 }) {
   const [isPending, startTransition] = useTransition()
-  const [focus, setFocus] = useState<Focus>(desk.canManageBilling ? 'directory' : 'students')
+  const [focus, setFocus] = useState<Focus>(desk.capabilities.fullDirectory ? 'directory' : 'students')
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | ClientStatus>('all')
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [draft, setDraft] = useState<Draft>(blankDraft(desk.canManageBilling ? 'organization' : 'student'))
+  const [draft, setDraft] = useState<Draft>(blankDraft(desk.capabilities.fullDirectory ? 'organization' : 'student'))
   const [programmeDraft, setProgrammeDraft] = useState<ProgrammeDraft>(blankProgramme())
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [linkTargetId, setLinkTargetId] = useState('')
   const [linkRelation, setLinkRelation] = useState<ClientLinkRelation>('guardian_of')
+  const [programmes, setProgrammes] = useState<AcademyProgrammeRecord[]>(desk.programmes)
+  const [programmeChoice, setProgrammeChoice] = useState('')
+  const [customProgrammeName, setCustomProgrammeName] = useState('')
+  const [programmeBusy, setProgrammeBusy] = useState(false)
+  const caps = desk.capabilities
+  const canMutate = draft.id ? caps.canUpdate : caps.canCreate
+  const showDirectory = caps.fullDirectory || desk.canManageBilling
+  const creatingProgramme = programmeChoice === NEW_PROGRAMME_VALUE
+
+  useEffect(() => {
+    setProgrammes(desk.programmes)
+  }, [desk.programmes])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return desk.clients.filter((client) => {
       if (focus === 'students' && client.kind !== 'student') return false
       if (focus === 'guardians' && client.kind !== 'guardian') return false
-      if (focus === 'directory' && (client.kind === 'student' || client.kind === 'guardian')) {
-        // Directory still shows everyone for finance; academy-only desks skip this focus.
-      }
-      if (focus === 'directory' && !desk.canManageBilling && client.kind !== 'student' && client.kind !== 'guardian') {
+      if (focus === 'directory' && !desk.capabilities.fullDirectory && client.kind !== 'student' && client.kind !== 'guardian') {
         return false
       }
       if (statusFilter !== 'all' && client.status !== statusFilter) return false
@@ -144,7 +156,7 @@ export function ClientManagement({
         .toLowerCase()
       return hay.includes(q)
     })
-  }, [desk.clients, desk.canManageBilling, focus, query, statusFilter])
+  }, [desk.clients, desk.capabilities.fullDirectory, focus, query, statusFilter])
 
   useEffect(() => {
     if (selectedId && !desk.clients.some((client) => client.id === selectedId)) {
@@ -155,6 +167,8 @@ export function ClientManagement({
   function selectClient(client: ClientRecord) {
     setSelectedId(client.id)
     setDraft(fromRecord(client))
+    setProgrammeChoice(client.programmeId ?? '')
+    setCustomProgrammeName('')
     setError(null)
     setNotice(null)
     if (client.kind === 'student') setFocus('students')
@@ -164,6 +178,8 @@ export function ClientManagement({
   function startCreate(kind: ClientKind) {
     setSelectedId(null)
     setDraft(blankDraft(kind))
+    setProgrammeChoice('')
+    setCustomProgrammeName('')
     setError(null)
     setNotice(null)
     if (kind === 'student') setFocus('students')
@@ -171,10 +187,81 @@ export function ClientManagement({
     else setFocus('directory')
   }
 
+  function onProgrammeSelectChange(value: string) {
+    setProgrammeChoice(value)
+    if (value === NEW_PROGRAMME_VALUE) {
+      setDraft((current) => ({ ...current, programmeId: '' }))
+      return
+    }
+    setCustomProgrammeName('')
+    setDraft((current) => ({ ...current, programmeId: value }))
+  }
+
+  async function createProgrammeInline(rawName?: string) {
+    const name = (rawName ?? customProgrammeName).trim()
+    if (!name || !caps.canManageCurriculum || programmeBusy) return null
+    const tempId = `temp-${crypto.randomUUID()}`
+    const optimistic: AcademyProgrammeRecord = {
+      id: tempId,
+      name,
+      description: null,
+      active: true,
+      sortOrder: programmes.length,
+      leadIds: [],
+      leadNames: [],
+      studentCount: 0,
+    }
+    setProgrammes((current) => [...current, optimistic])
+    setDraft((current) => ({ ...current, programmeId: tempId }))
+    setProgrammeChoice(tempId)
+    setCustomProgrammeName('')
+    setProgrammeBusy(true)
+    setError(null)
+    try {
+      const data = new FormData()
+      data.set('name', name)
+      data.set('description', '')
+      data.set('active', 'yes')
+      data.set('sortOrder', String(programmes.length))
+      const result = await saveAcademyProgramme(data)
+      if ('error' in result && result.error) {
+        setProgrammes((current) => current.filter((entry) => entry.id !== tempId))
+        setDraft((current) => ({ ...current, programmeId: '' }))
+        setProgrammeChoice(NEW_PROGRAMME_VALUE)
+        setCustomProgrammeName(name)
+        setError(result.error)
+        return null
+      }
+      if ('ok' in result && result.ok && result.id) {
+        setProgrammes((current) =>
+          current.map((entry) => (entry.id === tempId ? { ...entry, id: result.id } : entry)),
+        )
+        setDraft((current) => ({ ...current, programmeId: result.id }))
+        setProgrammeChoice(result.id)
+        setNotice(result.notice)
+        onRefresh?.()
+        return result.id
+      }
+      return null
+    } finally {
+      setProgrammeBusy(false)
+    }
+  }
+
   function runSave() {
     setError(null)
     setNotice(null)
     startTransition(async () => {
+      let programmeId = draft.programmeId
+      if (draft.kind === 'student' && creatingProgramme && customProgrammeName.trim()) {
+        const createdId = await createProgrammeInline(customProgrammeName)
+        if (!createdId) return
+        programmeId = createdId
+      }
+      if (programmeId.startsWith('temp-')) {
+        setError('Wait for the new programme to finish saving.')
+        return
+      }
       const data = new FormData()
       data.set('id', draft.id)
       data.set('name', draft.name)
@@ -189,7 +276,7 @@ export function ClientManagement({
       data.set('notes', draft.notes)
       data.set('source', draft.source)
       data.set('dateOfBirth', draft.dateOfBirth)
-      data.set('programmeId', draft.programmeId)
+      data.set('programmeId', programmeId)
       data.set('selfPay', draft.selfPay ? 'yes' : 'no')
       data.set('linksJson', JSON.stringify(draft.links))
       const result = await saveClientRecord(data)
@@ -240,6 +327,39 @@ export function ClientManagement({
       }
       if ('ok' in result && result.ok) {
         setNotice(result.notice)
+        if (!programmeDraft.id && result.id) {
+          setProgrammes((current) => {
+            if (current.some((entry) => entry.id === result.id)) return current
+            return [
+              ...current,
+              {
+                id: result.id,
+                name: programmeDraft.name.trim(),
+                description: programmeDraft.description.trim() || null,
+                active: programmeDraft.active,
+                sortOrder: Number(programmeDraft.sortOrder) || 0,
+                leadIds: programmeDraft.leadIds,
+                leadNames: [],
+                studentCount: 0,
+              },
+            ]
+          })
+        } else if (programmeDraft.id) {
+          setProgrammes((current) =>
+            current.map((entry) =>
+              entry.id === programmeDraft.id
+                ? {
+                    ...entry,
+                    name: programmeDraft.name.trim(),
+                    description: programmeDraft.description.trim() || null,
+                    active: programmeDraft.active,
+                    sortOrder: Number(programmeDraft.sortOrder) || 0,
+                    leadIds: programmeDraft.leadIds,
+                  }
+                : entry,
+            ),
+          )
+        }
         setProgrammeDraft(blankProgramme())
         onRefresh?.()
       }
@@ -250,7 +370,7 @@ export function ClientManagement({
     all: desk.clients.length,
     students: desk.clients.filter((c) => c.kind === 'student').length,
     guardians: desk.clients.filter((c) => c.kind === 'guardian').length,
-    programmes: desk.programmes.length,
+    programmes: programmes.length,
   }
 
   const linkCandidates = desk.clients.filter((client) => client.id !== draft.id)
@@ -291,9 +411,7 @@ export function ClientManagement({
             <span>Focus</span>
             {(
               [
-                ...(desk.canManageBilling || desk.canManageCurriculum
-                  ? ([['directory', 'Directory', String(counts.all)]] as const)
-                  : []),
+                ...(showDirectory ? ([['directory', 'Directory', String(counts.all)]] as const) : []),
                 ['students', 'Students', String(counts.students)],
                 ['guardians', 'Guardians', String(counts.guardians)],
                 ['curriculum', 'Curriculum', String(counts.programmes)],
@@ -324,15 +442,17 @@ export function ClientManagement({
                   </p>
                 </div>
                 <div className="clients-toolbar-actions">
-                  {focus === 'students' ? (
+                  {caps.canCreate && focus === 'students' ? (
                     <Button type="button" className="create-button" onClick={() => startCreate('student')}>
                       <Plus aria-hidden="true" /> Add student
                     </Button>
-                  ) : focus === 'guardians' ? (
+                  ) : null}
+                  {caps.canCreate && focus === 'guardians' ? (
                     <Button type="button" className="create-button" onClick={() => startCreate('guardian')}>
                       <Plus aria-hidden="true" /> Add guardian
                     </Button>
-                  ) : desk.canManageBilling ? (
+                  ) : null}
+                  {caps.canCreate && showDirectory && focus === 'directory' ? (
                     <>
                       <Button type="button" className="create-button" onClick={() => startCreate('organization')}>
                         <Plus aria-hidden="true" /> Organisation
@@ -391,12 +511,19 @@ export function ClientManagement({
                 <div className="clients-editor project-section-docs">
                   <header className="project-section-head">
                     <div>
-                      <h2>{draft.id ? 'Edit record' : 'New record'}</h2>
-                      <p>Primary type plus tags for dual roles. Links connect guardians, payers, and related parties.</p>
+                      <h2>{draft.id ? (caps.canUpdate ? 'Edit record' : 'Record') : 'New record'}</h2>
+                      <p>
+                        {canMutate
+                          ? 'Primary type plus tags for dual roles. Links connect guardians, payers, and related parties.'
+                          : 'You can view this record. Ask leadership if you need create or edit access.'}
+                      </p>
                     </div>
                   </header>
+                  {!canMutate && !draft.id ? (
+                    <p className="td-muted">Select a record to view details, or request create access in Settings → Module access.</p>
+                  ) : null}
 
-                  <div className="clients-form-grid">
+                  <div className={`clients-form-grid${canMutate ? '' : ' is-readonly'}`}>
                     <label className="form-field">
                       <span>Type</span>
                       <select
@@ -409,11 +536,15 @@ export function ClientManagement({
                             status: kind === 'student' && current.status === 'active' ? 'enquiry' : current.status,
                             programmeId: kind === 'student' ? current.programmeId : '',
                           }))
+                          if (kind !== 'student') {
+                            setProgrammeChoice('')
+                            setCustomProgrammeName('')
+                          }
                         }}
-                        disabled={!desk.canManageBilling && (draft.kind === 'organization' || draft.kind === 'individual')}
+                        disabled={!canMutate || (!showDirectory && (draft.kind === 'organization' || draft.kind === 'individual'))}
                       >
                         {Object.entries(CLIENT_KIND_LABELS).map(([value, label]) => {
-                          if (!desk.canManageBilling && (value === 'organization' || value === 'individual')) return null
+                          if (!showDirectory && (value === 'organization' || value === 'individual')) return null
                           return (
                             <option key={value} value={value}>
                               {label}
@@ -426,6 +557,7 @@ export function ClientManagement({
                       <span>Status</span>
                       <select
                         value={draft.status}
+                        disabled={!canMutate}
                         onChange={(event) => setDraft({ ...draft, status: event.target.value as ClientStatus })}
                       >
                         {Object.entries(CLIENT_STATUS_LABELS).map(([value, label]) => (
@@ -437,24 +569,34 @@ export function ClientManagement({
                     </label>
                     <label className="form-field clients-span-2">
                       <span>Name</span>
-                      <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+                      <input
+                        value={draft.name}
+                        disabled={!canMutate}
+                        onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+                      />
                     </label>
                     <label className="form-field">
                       <span>Email</span>
                       <input
                         type="email"
                         value={draft.email}
+                        disabled={!canMutate}
                         onChange={(event) => setDraft({ ...draft, email: event.target.value })}
                       />
                     </label>
                     <label className="form-field">
                       <span>Phone</span>
-                      <input value={draft.phone} onChange={(event) => setDraft({ ...draft, phone: event.target.value })} />
+                      <input
+                        value={draft.phone}
+                        disabled={!canMutate}
+                        onChange={(event) => setDraft({ ...draft, phone: event.target.value })}
+                      />
                     </label>
                     <label className="form-field clients-span-2">
                       <span>Tags</span>
                       <input
                         value={draft.tags}
+                        disabled={!canMutate}
                         onChange={(event) => setDraft({ ...draft, tags: event.target.value })}
                         placeholder="consulting, academy-parent, sponsor…"
                       />
@@ -464,6 +606,7 @@ export function ClientManagement({
                       <textarea
                         rows={3}
                         value={draft.specification}
+                        disabled={!canMutate}
                         onChange={(event) => setDraft({ ...draft, specification: event.target.value })}
                         placeholder="What they need, programme interest, delivery notes…"
                       />
@@ -472,12 +615,17 @@ export function ClientManagement({
                       <>
                         <label className="form-field">
                           <span>PIN / tax ref</span>
-                          <input value={draft.pin} onChange={(event) => setDraft({ ...draft, pin: event.target.value })} />
+                          <input
+                            value={draft.pin}
+                            disabled={!canMutate}
+                            onChange={(event) => setDraft({ ...draft, pin: event.target.value })}
+                          />
                         </label>
                         <label className="form-field">
                           <span>Source</span>
                           <input
                             value={draft.source}
+                            disabled={!canMutate}
                             onChange={(event) => setDraft({ ...draft, source: event.target.value })}
                             placeholder="Referral, walk-in, WhatsApp…"
                           />
@@ -487,6 +635,7 @@ export function ClientManagement({
                           <textarea
                             rows={2}
                             value={draft.address}
+                            disabled={!canMutate}
                             onChange={(event) => setDraft({ ...draft, address: event.target.value })}
                           />
                         </label>
@@ -494,27 +643,67 @@ export function ClientManagement({
                     )}
                     {draft.kind === 'student' ? (
                       <>
-                        <label className="form-field">
-                          <span>Programme</span>
-                          <select
-                            value={draft.programmeId}
-                            onChange={(event) => setDraft({ ...draft, programmeId: event.target.value })}
-                          >
-                            <option value="">Select programme</option>
-                            {desk.programmes
-                              .filter((programme) => programme.active || programme.id === draft.programmeId)
-                              .map((programme) => (
-                                <option key={programme.id} value={programme.id}>
-                                  {programme.name}
-                                </option>
-                              ))}
-                          </select>
-                        </label>
+                        <div className={`form-field clients-span-2${creatingProgramme ? ' category-field category-field-open' : ' category-field'}`}>
+                          <label>
+                            <span>Programme</span>
+                            <select
+                              value={creatingProgramme ? NEW_PROGRAMME_VALUE : draft.programmeId}
+                              disabled={!canMutate || programmeBusy}
+                              onChange={(event) => onProgrammeSelectChange(event.target.value)}
+                            >
+                              <option value="">Select programme</option>
+                              {programmes
+                                .filter((programme) => programme.active || programme.id === draft.programmeId)
+                                .map((programme) => (
+                                  <option key={programme.id} value={programme.id}>
+                                    {programme.name}
+                                  </option>
+                                ))}
+                              {caps.canManageCurriculum ? (
+                                <option value={NEW_PROGRAMME_VALUE}>Add new programme…</option>
+                              ) : null}
+                            </select>
+                          </label>
+                          {creatingProgramme && caps.canManageCurriculum ? (
+                            <label className="category-custom">
+                              New programme name
+                              <input
+                                value={customProgrammeName}
+                                onChange={(event) => setCustomProgrammeName(event.target.value)}
+                                placeholder="e.g. Youth Innovation Track"
+                                disabled={!canMutate || programmeBusy}
+                                autoFocus
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter') {
+                                    event.preventDefault()
+                                    void createProgrammeInline()
+                                  }
+                                }}
+                              />
+                            </label>
+                          ) : null}
+                          {creatingProgramme && caps.canManageCurriculum ? (
+                            <div className="row-actions" style={{ marginTop: 8 }}>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                disabled={!canMutate || programmeBusy || !customProgrammeName.trim()}
+                                onClick={() => void createProgrammeInline()}
+                              >
+                                {programmeBusy ? 'Adding…' : 'Create programme'}
+                              </Button>
+                            </div>
+                          ) : null}
+                          {!caps.canManageCurriculum ? (
+                            <p className="field-hint">Ask leadership for curriculum access to add programmes here.</p>
+                          ) : null}
+                        </div>
                         <label className="form-field">
                           <span>Date of birth</span>
                           <input
                             type="date"
                             value={draft.dateOfBirth}
+                            disabled={!canMutate}
                             onChange={(event) => setDraft({ ...draft, dateOfBirth: event.target.value })}
                           />
                         </label>
@@ -522,6 +711,7 @@ export function ClientManagement({
                           <input
                             type="checkbox"
                             checked={draft.selfPay}
+                            disabled={!canMutate}
                             onChange={(event) => setDraft({ ...draft, selfPay: event.target.checked })}
                           />
                           <span>Student may be billed directly (self-pay). Default is guardian / organisation.</span>
@@ -533,6 +723,7 @@ export function ClientManagement({
                       <textarea
                         rows={2}
                         value={draft.notes}
+                        disabled={!canMutate}
                         onChange={(event) => setDraft({ ...draft, notes: event.target.value })}
                       />
                     </label>
@@ -555,66 +746,82 @@ export function ClientManagement({
                             <span>
                               {CLIENT_LINK_LABELS[link.relation]} · {other?.name ?? 'Unknown'}
                             </span>
-                            <button
-                              type="button"
-                              className="attachment-remove"
-                              onClick={() =>
-                                setDraft((current) => ({
-                                  ...current,
-                                  links: current.links.filter((_, i) => i !== index),
-                                }))
-                              }
-                            >
-                              Remove
-                            </button>
+                            {canMutate ? (
+                              <button
+                                type="button"
+                                className="attachment-remove"
+                                onClick={() =>
+                                  setDraft((current) => ({
+                                    ...current,
+                                    links: current.links.filter((_, i) => i !== index),
+                                  }))
+                                }
+                              >
+                                Remove
+                              </button>
+                            ) : null}
                           </li>
                         )
                       })}
                     </ul>
-                    <div className="clients-link-add">
-                      <select value={linkRelation} onChange={(event) => setLinkRelation(event.target.value as ClientLinkRelation)}>
-                        {Object.entries(CLIENT_LINK_LABELS).map(([value, label]) => (
-                          <option key={value} value={value}>
-                            {label}
-                          </option>
-                        ))}
-                      </select>
-                      <select value={linkTargetId} onChange={(event) => setLinkTargetId(event.target.value)}>
-                        <option value="">Choose person…</option>
-                        {linkCandidates.map((client) => (
-                          <option key={client.id} value={client.id}>
-                            {client.name} · {CLIENT_KIND_LABELS[client.kind]}
-                          </option>
-                        ))}
-                      </select>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={!linkTargetId}
-                        onClick={() => {
-                          if (!linkTargetId) return
-                          setDraft((current) => ({
-                            ...current,
-                            links: [
-                              ...current.links.filter(
-                                (link) => !(link.toClientId === linkTargetId && link.relation === linkRelation),
-                              ),
-                              { toClientId: linkTargetId, relation: linkRelation },
-                            ],
-                          }))
-                          setLinkTargetId('')
-                        }}
-                      >
-                        Add link
-                      </Button>
-                    </div>
+                    {canMutate ? (
+                      <div className="clients-link-add">
+                        <select value={linkRelation} onChange={(event) => setLinkRelation(event.target.value as ClientLinkRelation)}>
+                          {Object.entries(CLIENT_LINK_LABELS).map(([value, label]) => (
+                            <option key={value} value={value}>
+                              {label}
+                            </option>
+                          ))}
+                        </select>
+                        <select value={linkTargetId} onChange={(event) => setLinkTargetId(event.target.value)}>
+                          <option value="">Choose person…</option>
+                          {linkCandidates.map((client) => (
+                            <option key={client.id} value={client.id}>
+                              {client.name} · {CLIENT_KIND_LABELS[client.kind]}
+                            </option>
+                          ))}
+                        </select>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={!linkTargetId}
+                          onClick={() => {
+                            if (!linkTargetId) return
+                            setDraft((current) => ({
+                              ...current,
+                              links: [
+                                ...current.links.filter(
+                                  (link) => !(link.toClientId === linkTargetId && link.relation === linkRelation),
+                                ),
+                                { toClientId: linkTargetId, relation: linkRelation },
+                              ],
+                            }))
+                            setLinkTargetId('')
+                          }}
+                        >
+                          Add link
+                        </Button>
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="row-actions">
-                    <Button type="button" className="create-button" disabled={isPending || !draft.name.trim()} onClick={runSave}>
-                      {isPending ? 'Saving…' : draft.id ? 'Save changes' : 'Create record'}
-                    </Button>
-                    {draft.id ? (
+                    {canMutate ? (
+                      <Button
+                        type="button"
+                        className="create-button"
+                        disabled={
+                          isPending ||
+                          programmeBusy ||
+                          !draft.name.trim() ||
+                          (creatingProgramme && !customProgrammeName.trim())
+                        }
+                        onClick={runSave}
+                      >
+                        {isPending ? 'Saving…' : draft.id ? 'Save changes' : 'Create record'}
+                      </Button>
+                    ) : null}
+                    {draft.id && caps.canDelete ? (
                       <Button type="button" variant="outline" disabled={isPending} onClick={() => runDelete(draft.id)}>
                         Remove
                       </Button>
@@ -643,7 +850,7 @@ export function ClientManagement({
                 </div>
               </header>
 
-              {desk.canManageCurriculum ? (
+              {caps.canManageCurriculum ? (
                 <div className="clients-editor">
                   <div className="clients-form-grid">
                     <label className="form-field clients-span-2">
@@ -732,10 +939,10 @@ export function ClientManagement({
               )}
 
               <div className="clients-programme-list">
-                {desk.programmes.length === 0 ? (
+                {programmes.length === 0 ? (
                   <p className="empty-state">No programmes yet. Add the first track to start academy intake.</p>
                 ) : (
-                  desk.programmes.map((programme) => (
+                  programmes.map((programme) => (
                     <article key={programme.id} className="clients-programme-card">
                       <div>
                         <span className={`clients-kind ${programme.active ? 'kind-image' : 'kind-file'}`}>
@@ -751,7 +958,7 @@ export function ClientManagement({
                             : ' · No leads assigned'}
                         </p>
                       </div>
-                      {desk.canManageCurriculum ? (
+                      {caps.canManageCurriculum && !programme.id.startsWith('temp-') ? (
                         <div className="row-actions">
                           <Button
                             type="button"
@@ -775,10 +982,17 @@ export function ClientManagement({
                             disabled={isPending}
                             onClick={() => {
                               if (!window.confirm('Remove this programme? Students keep their records.')) return
+                              setProgrammes((current) => current.filter((entry) => entry.id !== programme.id))
+                              if (draft.programmeId === programme.id) {
+                                setDraft((current) => ({ ...current, programmeId: '' }))
+                                setProgrammeChoice('')
+                              }
                               startTransition(async () => {
                                 const result = await deleteAcademyProgramme(programme.id)
-                                if ('error' in result && result.error) setError(result.error)
-                                else if ('ok' in result && result.ok) {
+                                if ('error' in result && result.error) {
+                                  setError(result.error)
+                                  onRefresh?.()
+                                } else if ('ok' in result && result.ok) {
                                   setNotice(result.notice)
                                   onRefresh?.()
                                 }

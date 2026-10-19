@@ -78,10 +78,23 @@ export type AcademyProgrammeRecord = {
   studentCount: number
 }
 
+export type ClientDeskCapabilities = {
+  canView: boolean
+  canCreate: boolean
+  canUpdate: boolean
+  canDelete: boolean
+  canManageCurriculum: boolean
+  /** See organisations / individuals (not only academy students). */
+  fullDirectory: boolean
+  /** Limited to programmes this person leads. */
+  academyScoped: boolean
+}
+
 export type ClientDesk = {
   clients: ClientRecord[]
   programmes: AcademyProgrammeRecord[]
   canManageCurriculum: boolean
   canManageBilling: boolean
   academyProgrammeIds: string[]
+  capabilities: ClientDeskCapabilities
 }

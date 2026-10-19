@@ -41,6 +41,7 @@ import { CreateResponsibilityDialog } from '@/components/create-responsibility-d
 import { TaskDetailSheet, type TaskDetailTab, type TaskReportEntry } from '@/components/task-detail-sheet'
 import { InviteEmployeeDialog } from '@/components/invite-employee-dialog'
 import { OrgSettingsPanel } from '@/components/org-settings-panel'
+import { ModuleAccessPanel } from '@/components/module-access-panel'
 import { AdminOfficeDesk } from '@/components/admin-office-desk'
 import { ClientManagement } from '@/components/client-management'
 import { ProjectWorkspace } from '@/components/project-workspace'
@@ -55,6 +56,7 @@ import { signOutToLogin } from '@/lib/auth/sign-out-client'
 import { resolveWorkspaceView, type WorkspaceView } from '@/lib/workspace-nav'
 import type { OfficeDesk } from '@/lib/admin-office/types'
 import type { ClientDesk } from '@/lib/clients/types'
+import type { ModuleAccessGrantRecord } from '@/lib/modules/catalog'
 import { DepartmentDetailBody, DepartmentDrawer } from '@/components/department-detail'
 import {
   departmentHealth,
@@ -71,6 +73,7 @@ import {
   canProgressTask,
   canManageOrg,
   canManageUsers,
+  canAssignModuleAccess,
   canAccessClientManagement,
   canRunAdminOffice,
   canSubmitLeadershipRequest,
@@ -572,6 +575,7 @@ export default function WorkhubDashboardDB({
   companyShortName = 'GCS',
   officeDesk = null,
   clientDesk = null,
+  moduleGrants: initialModuleGrants = [],
 }: {
   initialTasks: DbTask[]
   initialDepartments: DbDepartment[]
@@ -622,6 +626,7 @@ export default function WorkhubDashboardDB({
   companyShortName?: string
   officeDesk?: OfficeDesk | null
   clientDesk?: ClientDesk | null
+  moduleGrants?: ModuleAccessGrantRecord[]
 }) {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -631,6 +636,7 @@ export default function WorkhubDashboardDB({
   const [projectStatusFilter, setProjectStatusFilter] = useState<'all' | 'On track' | 'At risk' | 'Needs review'>('all')
   const [tasks, setTasks] = useState(initialTasks)
   const [projects, setProjects] = useState(initialProjects)
+  const [moduleGrants, setModuleGrants] = useState(initialModuleGrants)
   const [responsibilityRows, setResponsibilityRows] = useState(responsibilities)
   const [selectedTask, setSelectedTask] = useState<DbTask | null>(null)
   const [showNotifications, setShowNotifications] = useState(false)
@@ -711,6 +717,10 @@ export default function WorkhubDashboardDB({
   useEffect(() => {
     setProjects(initialProjects)
   }, [initialProjects])
+
+  useEffect(() => {
+    setModuleGrants(initialModuleGrants)
+  }, [initialModuleGrants])
 
   useEffect(() => {
     setSelectedTaskIds((current) => {
@@ -805,7 +815,20 @@ export default function WorkhubDashboardDB({
   const canManagePeople = canManageUsers(actor)
   const canEditOrg = canManageOrg(actor)
   const runsOffice = canRunAdminOffice(actor)
-  const canOpenClients = Boolean(clientDesk) || canAccessClientManagement(actor, Boolean(clientDesk?.academyProgrammeIds.length))
+  const clientsGrant = moduleGrants.find((grant) => grant.moduleKey === 'clients' && grant.userId === currentUserId)
+  const canOpenClients = Boolean(clientDesk) || canAccessClientManagement(actor, {
+    isAcademyLead: Boolean(clientDesk?.academyProgrammeIds.length),
+    grant: clientsGrant
+      ? {
+          canView: clientsGrant.canView,
+          canCreate: clientsGrant.canCreate,
+          canUpdate: clientsGrant.canUpdate,
+          canDelete: clientsGrant.canDelete,
+          canManageCurriculum: clientsGrant.canManageCurriculum,
+        }
+      : null,
+  })
+  const canGrantModules = canAssignModuleAccess(actor)
   const canSubmitRequests = canSubmitLeadershipRequest(actor)
   const canRequestWork = canSubmitWorkRequest(actor)
   const inviteRoleKeys = inviteableRoleKeys(actor)
@@ -833,7 +856,7 @@ export default function WorkhubDashboardDB({
       ? [{ label: 'Admin office' as const, icon: Building2, count: officeDesk?.pendingCount ?? 0, group: isManagement ? 'Lead' : 'Workspace' }]
       : []),
     { label: 'My office' as const, icon: Inbox, count: officeDesk?.minePending ?? 0, group: isManagement ? 'Work' : 'Workspace' },
-    ...((canManagePeople || canEditOrg) ? [{ label: 'Settings' as const, icon: Settings2, group: 'Account' }] : []),
+    ...((canManagePeople || canEditOrg || canGrantModules) ? [{ label: 'Settings' as const, icon: Settings2, group: 'Account' }] : []),
   ]
 
   const allowedViews = new Set<View>([...navItems.map((item) => item.label), 'Present'])
@@ -3411,7 +3434,7 @@ export default function WorkhubDashboardDB({
             </>
           )}
 
-          {activeNav === 'Settings' && (canManagePeople || canEditOrg) && (
+          {activeNav === 'Settings' && (canManagePeople || canEditOrg || canGrantModules) && (
             <>
               <ViewHeading
                 eyebrow="Workspace"
@@ -3467,6 +3490,13 @@ export default function WorkhubDashboardDB({
                   </div>
                 </section>
               </div>
+              {canGrantModules ? (
+                <ModuleAccessPanel
+                  people={people}
+                  grants={moduleGrants}
+                  onSaved={() => router.refresh()}
+                />
+              ) : null}
               {canEditOrg && (
                 <OrgSettingsPanel
                   people={people}
