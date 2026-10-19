@@ -113,6 +113,27 @@ export function canRunAdminOffice(user: Actor) {
   return false
 }
 
+/** High-level admins set GCS Academy programmes and assign ops leads. */
+export function canManageCurriculum(user: Actor) {
+  return isManagement(user)
+}
+
+/** Finance desk or management — full client directory + billing parties. */
+export function canManageClientBilling(user: Actor) {
+  return canRunAdminOffice(user)
+}
+
+/**
+ * Client management portal access.
+ * Pass `isAcademyLead` when the viewer is assigned on any academy programme.
+ */
+export function canAccessClientManagement(user: Actor, isAcademyLead = false) {
+  if (!user) return false
+  if (canManageClientBilling(user)) return true
+  if (isManagement(user)) return true
+  return isAcademyLead
+}
+
 export function canManageStaffRecords(user: Actor) {
   return canManageUsers(user) || canRunAdminOffice(user)
 }

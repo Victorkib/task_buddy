@@ -4,6 +4,7 @@ import WorkhubDashboardDB from '@/components/workhub-dashboard-db'
 import { SetupScreen } from '@/components/setup-screen'
 import { COMPANY_LEGAL_NAME, COMPANY_SHORT_NAME } from '@/lib/branding'
 import { isDatabaseConfigured } from '@/lib/db'
+import { getClientDesk } from '@/lib/db/clients'
 import { getOfficeDesk } from '@/lib/db/office'
 import { getDashboardData, getSettingsData, getWorkspaceContext } from '@/lib/db/queries'
 import type { ComponentProps } from 'react'
@@ -39,10 +40,11 @@ export default async function Page({
       redirect('/account/password')
     }
 
-    const [dashboardData, settings, officeDesk] = await Promise.all([
+    const [dashboardData, settings, officeDesk, clientDesk] = await Promise.all([
       getDashboardData(currentUser),
       getSettingsData(currentUser),
       getOfficeDesk(currentUser),
+      getClientDesk(currentUser),
     ])
 
     return (
@@ -75,6 +77,7 @@ export default async function Page({
           companyName={companyName}
           companyShortName={companyShortName}
           officeDesk={officeDesk}
+          clientDesk={clientDesk}
         />
       </Suspense>
     )

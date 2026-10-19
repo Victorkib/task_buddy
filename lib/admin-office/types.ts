@@ -186,6 +186,9 @@ export type OfficeClient = {
   phone: string | null
   address: string | null
   pin: string | null
+  kind?: 'organization' | 'individual' | 'student' | 'guardian'
+  status?: string
+  selfPay?: boolean
 }
 
 export type OfficeInvoiceLine = {

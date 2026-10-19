@@ -13,6 +13,7 @@ export type CompanySummary = {
 }
 
 export type CurrentUser = Person & {
+  companyId: string
   managerId?: string | null
   department?: { id: string; name: string; slug: string } | null
   manager?: { id: string; firstName: string; lastName: string } | null

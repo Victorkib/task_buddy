@@ -209,6 +209,7 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
   const [form, setForm] = useState<InvoiceForm>(() => blankInvoice(desk))
   const [clientForm, setClientForm] = useState(blankClient)
   const [paymentForm, setPaymentForm] = useState(blankPayment)
+  const [billingHint, setBillingHint] = useState<string | null>(null)
   const saved = desk.invoices.find((invoice) => invoice.id === form.id) ?? null
 
   function openInvoice(next: InvoiceForm) {
@@ -245,8 +246,15 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
     const client = desk.clients.find((item) => item.id === clientId)
     if (!client) {
       setForm((current) => ({ ...current, clientId: '', clientName: '', clientEmail: '', clientPhone: '', clientAddress: '', clientPin: '' }))
+      setBillingHint(null)
       return
     }
+    const studentNeedsPayer = client.kind === 'student' && !client.selfPay
+    setBillingHint(
+      studentNeedsPayer
+        ? `${client.name} is a student without self-pay. Prefer billing their guardian or organisation from Clients, or enable self-pay on their record.`
+        : null,
+    )
     setForm((current) => ({
       ...current,
       clientId: client.id,
@@ -341,7 +349,7 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
             New invoice
           </Button>
           <button type="button" className={`office-quiet${drawer === 'clients' ? ' selected' : ''}`} onClick={() => setDrawer('clients')}>
-            Clients
+            Directory
           </button>
           <button type="button" className={`office-quiet${drawer === 'payments' ? ' selected' : ''}`} onClick={() => setDrawer('payments')}>
             VAT and payment details
@@ -402,16 +410,29 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
               </header>
               <div className="invoice-grid">
                 <label>
-                  Saved client
+                  Bill to
                   <select value={form.clientId} onChange={(event) => chooseClient(event.target.value)}>
-                    <option value="">New client</option>
-                    {desk.clients.map((client) => (
-                      <option key={client.id} value={client.id}>
-                        {client.name}
-                      </option>
-                    ))}
+                    <option value="">New bill-to party</option>
+                    {desk.clients.map((client) => {
+                      const kind =
+                        client.kind === 'organization'
+                          ? 'Org'
+                          : client.kind === 'guardian'
+                            ? 'Guardian'
+                            : client.kind === 'student'
+                              ? client.selfPay
+                                ? 'Student · self-pay'
+                                : 'Student'
+                              : 'Individual'
+                      return (
+                        <option key={client.id} value={client.id}>
+                          {client.name} · {kind}
+                        </option>
+                      )
+                    })}
                   </select>
                 </label>
+                {billingHint ? <p className="field-hint invoice-span">{billingHint}</p> : null}
                 <label>
                   Invoice date
                   <input type="date" value={form.issueDate} onChange={(event) => patch('issueDate', event.target.value)} required />
@@ -763,7 +784,11 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
       ) : null}
 
       {drawer === 'clients' ? (
-        <OfficeDrawer title="Clients" subtitle="Saved clients can be picked on the next invoice." onClose={closeDrawer}>
+        <OfficeDrawer
+          title="Bill-to directory"
+          subtitle="Quick invoice picks. Full profiles, students, and guardians live under Clients in the sidebar."
+          onClose={closeDrawer}
+        >
           <ClientsView desk={desk} pending={pending} form={clientForm} setForm={setClientForm} run={run} />
         </OfficeDrawer>
       ) : null}
@@ -941,7 +966,10 @@ function ClientsView({
         <div className="card-head">
           <strong>{form.id ? 'Edit client' : 'New client'}</strong>
         </div>
-        <p className="field-hint">Saved clients can be picked on the next invoice. Changing a client here does not rewrite invoices already saved.</p>
+        <p className="field-hint">
+          Prefer <strong>Clients</strong> in the sidebar for organisations, students, guardians, and links. This drawer stays for fast bill-to
+          edits. Changing a party here does not rewrite invoices already saved.
+        </p>
         <div className="form-grid">
           <label className="category-custom">
             Name

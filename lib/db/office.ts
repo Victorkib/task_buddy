@@ -695,6 +695,12 @@ async function loadOfficeDesk(user: OfficeViewer): Promise<OfficeDesk> {
       phone: row.phone,
       address: row.address,
       pin: row.pin,
+      kind:
+        row.kind === 'organization' || row.kind === 'student' || row.kind === 'guardian'
+          ? row.kind
+          : 'individual',
+      status: row.status,
+      selfPay: row.selfPay,
     })),
     invoices: invoiceRows.map((row) => ({
       id: row.id,

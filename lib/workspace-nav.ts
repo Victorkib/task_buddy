@@ -8,6 +8,7 @@ export const WORKSPACE_VIEWS = [
   'Projects',
   'Reports',
   'Activity',
+  'Clients',
   'Admin office',
   'My office',
   'Settings',

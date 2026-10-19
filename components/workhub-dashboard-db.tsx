@@ -9,6 +9,7 @@ import {
   Building2,
   CalendarDays,
   Check,
+  ContactRound,
   ChevronLeft,
   ChevronRight,
   CircleAlert,
@@ -41,6 +42,7 @@ import { TaskDetailSheet, type TaskDetailTab, type TaskReportEntry } from '@/com
 import { InviteEmployeeDialog } from '@/components/invite-employee-dialog'
 import { OrgSettingsPanel } from '@/components/org-settings-panel'
 import { AdminOfficeDesk } from '@/components/admin-office-desk'
+import { ClientManagement } from '@/components/client-management'
 import { ProjectWorkspace } from '@/components/project-workspace'
 import { WorkhubShell, useCollapsedSidebar } from '@/components/workhub-shell'
 import { UserAvatar } from '@/components/user-avatar'
@@ -52,6 +54,7 @@ import { formatDue, formatLongDate, formatRelative, fullName, greeting, category
 import { signOutToLogin } from '@/lib/auth/sign-out-client'
 import { resolveWorkspaceView, type WorkspaceView } from '@/lib/workspace-nav'
 import type { OfficeDesk } from '@/lib/admin-office/types'
+import type { ClientDesk } from '@/lib/clients/types'
 import { DepartmentDetailBody, DepartmentDrawer } from '@/components/department-detail'
 import {
   departmentHealth,
@@ -68,6 +71,7 @@ import {
   canProgressTask,
   canManageOrg,
   canManageUsers,
+  canAccessClientManagement,
   canRunAdminOffice,
   canSubmitLeadershipRequest,
   canSubmitWorkRequest,
@@ -567,6 +571,7 @@ export default function WorkhubDashboardDB({
   companyName = 'GCS Operations',
   companyShortName = 'GCS',
   officeDesk = null,
+  clientDesk = null,
 }: {
   initialTasks: DbTask[]
   initialDepartments: DbDepartment[]
@@ -616,6 +621,7 @@ export default function WorkhubDashboardDB({
   companyName?: string
   companyShortName?: string
   officeDesk?: OfficeDesk | null
+  clientDesk?: ClientDesk | null
 }) {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -799,6 +805,7 @@ export default function WorkhubDashboardDB({
   const canManagePeople = canManageUsers(actor)
   const canEditOrg = canManageOrg(actor)
   const runsOffice = canRunAdminOffice(actor)
+  const canOpenClients = Boolean(clientDesk) || canAccessClientManagement(actor, Boolean(clientDesk?.academyProgrammeIds.length))
   const canSubmitRequests = canSubmitLeadershipRequest(actor)
   const canRequestWork = canSubmitWorkRequest(actor)
   const inviteRoleKeys = inviteableRoleKeys(actor)
@@ -819,6 +826,9 @@ export default function WorkhubDashboardDB({
     ...(canViewProjects ? [{ label: 'Projects' as const, icon: BriefcaseBusiness, group: 'Delivery' }] : []),
     ...(canViewReports ? [{ label: 'Reports' as const, icon: FileText, group: isManagement ? 'Lead' : 'Delivery' }] : []),
     { label: 'Activity', icon: Activity, group: isManagement ? 'Work' : 'Workspace' },
+    ...(canOpenClients && clientDesk
+      ? [{ label: 'Clients' as const, icon: ContactRound, count: clientDesk.clients.length, group: isManagement ? 'Lead' : 'Delivery' }]
+      : []),
     ...(runsOffice
       ? [{ label: 'Admin office' as const, icon: Building2, count: officeDesk?.pendingCount ?? 0, group: isManagement ? 'Lead' : 'Workspace' }]
       : []),
@@ -3348,6 +3358,14 @@ export default function WorkhubDashboardDB({
               </div>
               </div>
             </>
+          )}
+
+          {activeNav === 'Clients' && clientDesk && (
+            <ClientManagement
+              desk={clientDesk}
+              people={(directory?.length ? directory : people) as Person[]}
+              onRefresh={() => router.refresh()}
+            />
           )}
 
           {activeNav === 'Admin office' && runsOffice && officeDesk && (

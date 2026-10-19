@@ -1300,6 +1300,55 @@ export const officePaymentAccounts = pgTable(
   (table) => [index('office_payment_accounts_company_idx').on(table.companyId, table.sortOrder)],
 )
 
+export const clientKindEnum = pgEnum('client_kind', ['organization', 'individual', 'student', 'guardian'])
+export const clientStatusEnum = pgEnum('client_status', [
+  'enquiry',
+  'registered',
+  'active',
+  'paused',
+  'completed',
+  'archived',
+])
+export const clientLinkRelationEnum = pgEnum('client_link_relation', [
+  'guardian_of',
+  'payer_for',
+  'related_to',
+])
+
+export const academyProgrammes = pgTable(
+  'academy_programmes',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    description: text('description'),
+    active: boolean('active').notNull().default(true),
+    sortOrder: integer('sort_order').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index('academy_programmes_company_idx').on(table.companyId, table.sortOrder)],
+)
+
+export const academyProgrammeLeads = pgTable(
+  'academy_programme_leads',
+  {
+    programmeId: uuid('programme_id')
+      .notNull()
+      .references(() => academyProgrammes.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('academy_programme_leads_pk').on(table.programmeId, table.userId),
+    index('academy_programme_leads_user_idx').on(table.userId),
+  ],
+)
+
 export const officeClients = pgTable(
   'office_clients',
   {
@@ -1312,10 +1361,46 @@ export const officeClients = pgTable(
     phone: text('phone'),
     address: text('address'),
     pin: text('pin'),
+    kind: clientKindEnum('kind').notNull().default('individual'),
+    status: clientStatusEnum('status').notNull().default('active'),
+    tags: text('tags').notNull().default('[]'),
+    specification: text('specification'),
+    notes: text('notes'),
+    source: text('source'),
+    dateOfBirth: date('date_of_birth'),
+    programmeId: uuid('programme_id').references(() => academyProgrammes.id, { onDelete: 'set null' }),
+    selfPay: boolean('self_pay').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [index('office_clients_company_idx').on(table.companyId, table.name)],
+  (table) => [
+    index('office_clients_company_idx').on(table.companyId, table.name),
+    index('office_clients_kind_idx').on(table.companyId, table.kind),
+    index('office_clients_programme_idx').on(table.programmeId),
+  ],
+)
+
+export const officeClientLinks = pgTable(
+  'office_client_links',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    fromClientId: uuid('from_client_id')
+      .notNull()
+      .references(() => officeClients.id, { onDelete: 'cascade' }),
+    toClientId: uuid('to_client_id')
+      .notNull()
+      .references(() => officeClients.id, { onDelete: 'cascade' }),
+    relation: clientLinkRelationEnum('relation').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('office_client_links_unique').on(table.fromClientId, table.toClientId, table.relation),
+    index('office_client_links_to_idx').on(table.toClientId),
+    index('office_client_links_company_idx').on(table.companyId),
+  ],
 )
 
 export const officeInvoices = pgTable(
@@ -1373,8 +1458,42 @@ export const officePaymentAccountsRelations = relations(officePaymentAccounts, (
   company: one(companies, { fields: [officePaymentAccounts.companyId], references: [companies.id] }),
 }))
 
-export const officeClientsRelations = relations(officeClients, ({ one }) => ({
+export const academyProgrammesRelations = relations(academyProgrammes, ({ one, many }) => ({
+  company: one(companies, { fields: [academyProgrammes.companyId], references: [companies.id] }),
+  leads: many(academyProgrammeLeads),
+  clients: many(officeClients),
+}))
+
+export const academyProgrammeLeadsRelations = relations(academyProgrammeLeads, ({ one }) => ({
+  programme: one(academyProgrammes, {
+    fields: [academyProgrammeLeads.programmeId],
+    references: [academyProgrammes.id],
+  }),
+  user: one(users, { fields: [academyProgrammeLeads.userId], references: [users.id] }),
+}))
+
+export const officeClientsRelations = relations(officeClients, ({ one, many }) => ({
   company: one(companies, { fields: [officeClients.companyId], references: [companies.id] }),
+  programme: one(academyProgrammes, {
+    fields: [officeClients.programmeId],
+    references: [academyProgrammes.id],
+  }),
+  linksFrom: many(officeClientLinks, { relationName: 'clientLinkFrom' }),
+  linksTo: many(officeClientLinks, { relationName: 'clientLinkTo' }),
+}))
+
+export const officeClientLinksRelations = relations(officeClientLinks, ({ one }) => ({
+  company: one(companies, { fields: [officeClientLinks.companyId], references: [companies.id] }),
+  fromClient: one(officeClients, {
+    fields: [officeClientLinks.fromClientId],
+    references: [officeClients.id],
+    relationName: 'clientLinkFrom',
+  }),
+  toClient: one(officeClients, {
+    fields: [officeClientLinks.toClientId],
+    references: [officeClients.id],
+    relationName: 'clientLinkTo',
+  }),
 }))
 
 export const officeInvoicesRelations = relations(officeInvoices, ({ one, many }) => ({
