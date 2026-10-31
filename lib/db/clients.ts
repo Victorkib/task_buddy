@@ -5,7 +5,7 @@ import {
   resolveClientCapabilities,
 } from '@/lib/auth/permissions'
 import { getUserModuleGrant } from '@/lib/db/module-access'
-import { parseTags } from '@/lib/clients/parse'
+import { normalizeClientStatus, parseTags } from '@/lib/clients/parse'
 import type {
   AcademyProgrammeRecord,
   ClientDesk,
@@ -30,16 +30,7 @@ function asKind(value: string): ClientKind {
 }
 
 function asStatus(value: string): ClientStatus {
-  if (
-    value === 'enquiry' ||
-    value === 'registered' ||
-    value === 'paused' ||
-    value === 'completed' ||
-    value === 'archived'
-  ) {
-    return value
-  }
-  return 'active'
+  return normalizeClientStatus(value) ?? 'active'
 }
 
 function asRelation(value: string): ClientLinkRelation {

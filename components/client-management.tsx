@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, useTransition } from 'react'
+import { useMemo, useState, useTransition } from 'react'
 import { GraduationCap, Link2, Plus, Search, Users } from 'lucide-react'
 import { deleteAcademyProgramme, deleteClientRecord, saveAcademyProgramme, saveClientRecord } from '@/app/clients-actions'
 import { Button } from '@/components/ui/button'
@@ -129,9 +129,15 @@ export function ClientManagement({
   const showDirectory = caps.fullDirectory || desk.canManageBilling
   const creatingProgramme = programmeChoice === NEW_PROGRAMME_VALUE
 
-  useEffect(() => {
+  const [syncedProgrammes, setSyncedProgrammes] = useState(desk.programmes)
+  if (syncedProgrammes !== desk.programmes) {
+    setSyncedProgrammes(desk.programmes)
     setProgrammes(desk.programmes)
-  }, [desk.programmes])
+  }
+
+  if (selectedId && !desk.clients.some((client) => client.id === selectedId)) {
+    setSelectedId(null)
+  }
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -157,12 +163,6 @@ export function ClientManagement({
       return hay.includes(q)
     })
   }, [desk.clients, desk.capabilities.fullDirectory, focus, query, statusFilter])
-
-  useEffect(() => {
-    if (selectedId && !desk.clients.some((client) => client.id === selectedId)) {
-      setSelectedId(null)
-    }
-  }, [desk.clients, selectedId])
 
   function selectClient(client: ClientRecord) {
     setSelectedId(client.id)

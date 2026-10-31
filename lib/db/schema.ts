@@ -1303,7 +1303,8 @@ export const officePaymentAccounts = pgTable(
 export const clientKindEnum = pgEnum('client_kind', ['organization', 'individual', 'student', 'guardian'])
 export const clientStatusEnum = pgEnum('client_status', [
   'enquiry',
-  'registered',
+  'registration_initiated',
+  'enrolled',
   'active',
   'paused',
   'completed',
@@ -1398,6 +1399,8 @@ export const officeClients = pgTable(
     dateOfBirth: date('date_of_birth'),
     programmeId: uuid('programme_id').references(() => academyProgrammes.id, { onDelete: 'set null' }),
     selfPay: boolean('self_pay').notNull().default(false),
+    /** Stable id from sheet/n8n so re-posts update instead of duplicating. */
+    externalId: text('external_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
@@ -1405,6 +1408,7 @@ export const officeClients = pgTable(
     index('office_clients_company_idx').on(table.companyId, table.name),
     index('office_clients_kind_idx').on(table.companyId, table.kind),
     index('office_clients_programme_idx').on(table.programmeId),
+    uniqueIndex('office_clients_external_idx').on(table.companyId, table.externalId),
   ],
 )
 

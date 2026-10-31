@@ -3,7 +3,8 @@ export type ClientKind = (typeof CLIENT_KINDS)[number]
 
 export const CLIENT_STATUSES = [
   'enquiry',
-  'registered',
+  'registration_initiated',
+  'enrolled',
   'active',
   'paused',
   'completed',
@@ -23,7 +24,8 @@ export const CLIENT_KIND_LABELS: Record<ClientKind, string> = {
 
 export const CLIENT_STATUS_LABELS: Record<ClientStatus, string> = {
   enquiry: 'Enquiry',
-  registered: 'Registered',
+  registration_initiated: 'Registration Initiated',
+  enrolled: 'Enrolled',
   active: 'Active',
   paused: 'Paused',
   completed: 'Completed',

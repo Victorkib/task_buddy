@@ -38,6 +38,14 @@ export function isClientStatus(value: string): value is ClientStatus {
   return (CLIENT_STATUSES as readonly string[]).includes(value)
 }
 
+// Accepts stored values, display labels ("Registration Initiated") and the retired 'registered'.
+export function normalizeClientStatus(value: string | null | undefined): ClientStatus | null {
+  const key = (value ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+  if (!key) return null
+  if (key === 'registered') return 'registration_initiated'
+  return isClientStatus(key) ? key : null
+}
+
 export function isClientLinkRelation(value: string): value is ClientLinkRelation {
   return (CLIENT_LINK_RELATIONS as readonly string[]).includes(value)
 }
