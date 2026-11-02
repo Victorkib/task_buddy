@@ -196,6 +196,8 @@ export type OfficeInvoiceLine = {
   description: string
   quantityHundredths: number
   rateCents: number
+  /** Student or other party the line was raised for, when billing a guardian or sponsor. */
+  subjectClientId: string | null
 }
 
 export type OfficeInvoice = {

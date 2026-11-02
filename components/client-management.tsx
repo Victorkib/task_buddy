@@ -1,18 +1,37 @@
 'use client'
 
 import { useMemo, useState, useTransition } from 'react'
-import { GraduationCap, Link2, Plus, Search, Users } from 'lucide-react'
-import { deleteAcademyProgramme, deleteClientRecord, saveAcademyProgramme, saveClientRecord } from '@/app/clients-actions'
+import { GraduationCap, Plus, Search, Users } from 'lucide-react'
+import {
+  createLinkedClient,
+  deleteAcademyProgramme,
+  deleteClientRecord,
+  linkClients,
+  saveAcademyProgramme,
+  saveClientRecord,
+  unlinkClients,
+} from '@/app/clients-actions'
+import { ClientFamilyPanel, type QuickAddInput } from '@/components/client-family'
+import { ClientInvoicesSection } from '@/components/client-invoices'
 import { Button } from '@/components/ui/button'
 import { UserAvatar } from '@/components/user-avatar'
 import {
+  applyOverlay,
+  EMPTY_OVERLAY,
+  orientLink,
+  splitFamily,
+  type ClientOverlay,
+  type FamilyMember,
+  type OverlayLink,
+} from '@/lib/clients/family'
+import {
   CLIENT_KIND_LABELS,
-  CLIENT_LINK_LABELS,
   CLIENT_STATUS_LABELS,
   type AcademyProgrammeRecord,
   type ClientDesk,
   type ClientKind,
   type ClientLinkRelation,
+  type ClientLinkView,
   type ClientRecord,
   type ClientStatus,
 } from '@/lib/clients/types'
@@ -22,7 +41,8 @@ const NEW_PROGRAMME_VALUE = '__new__'
 
 type Focus = 'directory' | 'students' | 'guardians' | 'curriculum'
 
-type DraftLink = { toClientId: string; relation: ClientLinkRelation }
+/** Links picked before a new record is saved; they are made when it is. */
+type PendingLink = { otherId: string; relation: ClientLinkRelation }
 
 type Draft = {
   id: string
@@ -40,7 +60,7 @@ type Draft = {
   dateOfBirth: string
   programmeId: string
   selfPay: boolean
-  links: DraftLink[]
+  pendingLinks: PendingLink[]
 }
 
 type ProgrammeDraft = {
@@ -69,7 +89,7 @@ function blankDraft(kind: ClientKind = 'individual'): Draft {
     dateOfBirth: '',
     programmeId: '',
     selfPay: false,
-    links: [],
+    pendingLinks: [],
   }
 }
 
@@ -90,10 +110,44 @@ function fromRecord(client: ClientRecord): Draft {
     dateOfBirth: client.dateOfBirth ? String(client.dateOfBirth).slice(0, 10) : '',
     programmeId: client.programmeId ?? '',
     selfPay: client.selfPay,
-    links: client.links
-      .filter((link) => link.direction === 'from')
-      .map((link) => ({ toClientId: link.otherId, relation: link.relation })),
+    pendingLinks: [],
   }
+}
+
+const SELF = '__self__'
+
+/** The record as the server will hold it, shown at once while the directory refreshes. */
+function recordFromDraft(draft: Draft, id: string, programmeName: string | null): ClientRecord {
+  const now = new Date().toISOString()
+  return {
+    id,
+    name: draft.name.trim(),
+    email: draft.email.trim() || null,
+    phone: draft.phone.trim() || null,
+    address: draft.address.trim() || null,
+    pin: draft.pin.trim() || null,
+    kind: draft.kind,
+    status: draft.status,
+    tags: draft.tags
+      .split(',')
+      .map((tag) => tag.trim().toLowerCase())
+      .filter(Boolean),
+    specification: draft.specification.trim() || null,
+    notes: draft.notes.trim() || null,
+    source: draft.source.trim() || null,
+    dateOfBirth: draft.dateOfBirth || null,
+    programmeId: draft.kind === 'student' ? draft.programmeId || null : null,
+    programmeName: draft.kind === 'student' ? programmeName : null,
+    selfPay: draft.selfPay,
+    createdAt: now,
+    updatedAt: now,
+    links: [],
+  }
+}
+
+function namesLine(names: string[]) {
+  if (names.length <= 2) return names.join(' & ')
+  return `${names.slice(0, 2).join(', ')} +${names.length - 2}`
 }
 
 function blankProgramme(): ProgrammeDraft {
@@ -118,8 +172,10 @@ export function ClientManagement({
   const [programmeDraft, setProgrammeDraft] = useState<ProgrammeDraft>(blankProgramme())
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [linkTargetId, setLinkTargetId] = useState('')
-  const [linkRelation, setLinkRelation] = useState<ClientLinkRelation>('guardian_of')
+  const [overlay, setOverlay] = useState<ClientOverlay>(EMPTY_OVERLAY)
+  const [savedSnapshot, setSavedSnapshot] = useState(() =>
+    JSON.stringify(blankDraft(desk.capabilities.fullDirectory ? 'organization' : 'student')),
+  )
   const [programmes, setProgrammes] = useState<AcademyProgrammeRecord[]>(desk.programmes)
   const [programmeChoice, setProgrammeChoice] = useState('')
   const [customProgrammeName, setCustomProgrammeName] = useState('')
@@ -135,13 +191,23 @@ export function ClientManagement({
     setProgrammes(desk.programmes)
   }
 
-  if (selectedId && !desk.clients.some((client) => client.id === selectedId)) {
+  // Fresh directory data already holds every change the overlay was standing in for.
+  const [syncedClients, setSyncedClients] = useState(desk.clients)
+  if (syncedClients !== desk.clients) {
+    setSyncedClients(desk.clients)
+    setOverlay(EMPTY_OVERLAY)
+  }
+
+  const allClients = useMemo(() => applyOverlay(desk.clients, overlay), [desk.clients, overlay])
+  const clientsById = useMemo(() => new Map(allClients.map((client) => [client.id, client])), [allClients])
+
+  if (selectedId && !clientsById.has(selectedId)) {
     setSelectedId(null)
   }
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return desk.clients.filter((client) => {
+    return allClients.filter((client) => {
       if (focus === 'students' && client.kind !== 'student') return false
       if (focus === 'guardians' && client.kind !== 'guardian') return false
       if (focus === 'directory' && !desk.capabilities.fullDirectory && client.kind !== 'student' && client.kind !== 'guardian') {
@@ -162,11 +228,18 @@ export function ClientManagement({
         .toLowerCase()
       return hay.includes(q)
     })
-  }, [desk.clients, desk.capabilities.fullDirectory, focus, query, statusFilter])
+  }, [allClients, desk.capabilities.fullDirectory, focus, query, statusFilter])
+
+  function confirmLeave() {
+    if (JSON.stringify(draft) === savedSnapshot) return true
+    return window.confirm('You have unsaved changes on this record. Leave without saving them?')
+  }
 
   function selectClient(client: ClientRecord) {
+    const next = fromRecord(client)
     setSelectedId(client.id)
-    setDraft(fromRecord(client))
+    setDraft(next)
+    setSavedSnapshot(JSON.stringify(next))
     setProgrammeChoice(client.programmeId ?? '')
     setCustomProgrammeName('')
     setError(null)
@@ -176,8 +249,11 @@ export function ClientManagement({
   }
 
   function startCreate(kind: ClientKind) {
+    if (!confirmLeave()) return
+    const next = blankDraft(kind)
     setSelectedId(null)
-    setDraft(blankDraft(kind))
+    setDraft(next)
+    setSavedSnapshot(JSON.stringify(next))
     setProgrammeChoice('')
     setCustomProgrammeName('')
     setError(null)
@@ -278,7 +354,7 @@ export function ClientManagement({
       data.set('dateOfBirth', draft.dateOfBirth)
       data.set('programmeId', programmeId)
       data.set('selfPay', draft.selfPay ? 'yes' : 'no')
-      data.set('linksJson', JSON.stringify(draft.links))
+      if (!draft.id) data.set('pendingLinksJson', JSON.stringify(draft.pendingLinks))
       const result = await saveClientRecord(data)
       if ('error' in result && result.error) {
         setError(result.error)
@@ -286,6 +362,19 @@ export function ClientManagement({
       }
       if ('ok' in result && result.ok) {
         setNotice(result.notice)
+        const saved: Draft = { ...draft, id: result.id, programmeId, pendingLinks: [] }
+        if (!draft.id && result.id) {
+          // Show the new record, and the links it was saved with, before the refresh lands.
+          const programmeName = programmes.find((programme) => programme.id === programmeId)?.name ?? null
+          const createdLinks: OverlayLink[] = result.links
+          setOverlay((current) => ({
+            ...current,
+            clients: [...current.clients, recordFromDraft(saved, result.id, programmeName)],
+            links: [...current.links, ...createdLinks],
+          }))
+        }
+        setDraft(saved)
+        setSavedSnapshot(JSON.stringify(saved))
         if (result.id) setSelectedId(result.id)
         onRefresh?.()
       }
@@ -302,8 +391,10 @@ export function ClientManagement({
         return
       }
       if ('ok' in result && result.ok) {
+        const next = blankDraft()
         setSelectedId(null)
-        setDraft(blankDraft())
+        setDraft(next)
+        setSavedSnapshot(JSON.stringify(next))
         setNotice(result.notice)
         onRefresh?.()
       }
@@ -373,7 +464,151 @@ export function ClientManagement({
     programmes: programmes.length,
   }
 
-  const linkCandidates = desk.clients.filter((client) => client.id !== draft.id)
+  const savedRecord = draft.id ? clientsById.get(draft.id) ?? null : null
+
+  // Saved records show their stored links; a new record shows the links it will be saved with.
+  const familySelf = useMemo(() => {
+    if (draft.id) {
+      return {
+        id: draft.id,
+        name: draft.name || savedRecord?.name || '',
+        kind: savedRecord?.kind ?? draft.kind,
+        links: savedRecord?.links ?? [],
+      }
+    }
+    const links: ClientLinkView[] = draft.pendingLinks.flatMap((link) => {
+      const other = clientsById.get(link.otherId)
+      if (!other) return []
+      const oriented = orientLink({ id: SELF, kind: draft.kind }, { id: other.id, kind: other.kind }, link.relation)
+      if (!oriented) return []
+      return [
+        {
+          id: `pending:${link.otherId}:${link.relation}`,
+          relation: link.relation,
+          otherId: other.id,
+          otherName: other.name,
+          otherKind: other.kind,
+          direction: oriented.fromId === SELF ? ('from' as const) : ('to' as const),
+        },
+      ]
+    })
+    return { id: '', name: draft.name, kind: draft.kind, links }
+  }, [draft.id, draft.name, draft.kind, draft.pendingLinks, savedRecord, clientsById])
+
+  const familyLines = useMemo(() => {
+    const lines = new Map<string, string>()
+    for (const client of allClients) {
+      const family = splitFamily(client, clientsById)
+      if (client.kind === 'student') {
+        lines.set(
+          client.id,
+          family.parents.length
+            ? `Child of ${namesLine(family.parents.map((member) => member.otherName))}`
+            : client.selfPay
+              ? 'Self-pay'
+              : 'Self-sponsored · billed directly',
+        )
+      } else if (family.children.length) {
+        const names = namesLine(family.children.map((member) => member.otherName))
+        lines.set(client.id, client.kind === 'organization' ? `Sponsors ${names}` : `Parent of ${names}`)
+      }
+    }
+    return lines
+  }, [allClients, clientsById])
+
+  function openFromFamily(id: string) {
+    const client = clientsById.get(id)
+    if (!client || !confirmLeave()) return
+    setQuery('')
+    setStatusFilter('all')
+    selectClient(client)
+  }
+
+  function handleLink(otherId: string, relation: ClientLinkRelation) {
+    setError(null)
+    setNotice(null)
+    if (!draft.id) {
+      setDraft((current) => ({
+        ...current,
+        pendingLinks: [
+          ...current.pendingLinks.filter((link) => !(link.otherId === otherId && link.relation === relation)),
+          { otherId, relation },
+        ],
+      }))
+      return
+    }
+    const anchorId = draft.id
+    startTransition(async () => {
+      const result = await linkClients({ anchorId, otherId, relation })
+      if ('error' in result && result.error) {
+        setError(result.error)
+        return
+      }
+      if ('ok' in result && result.ok) {
+        const link = result.link
+        if (link) setOverlay((current) => ({ ...current, links: [...current.links, link] }))
+        setNotice(result.notice)
+        onRefresh?.()
+      }
+    })
+  }
+
+  function handleUnlink(member: FamilyMember, linkIds: string[]) {
+    setError(null)
+    setNotice(null)
+    if (!draft.id) {
+      const drop = new Set(linkIds)
+      setDraft((current) => ({
+        ...current,
+        pendingLinks: current.pendingLinks.filter((link) => !drop.has(`pending:${link.otherId}:${link.relation}`)),
+      }))
+      return
+    }
+    startTransition(async () => {
+      for (const linkId of linkIds) {
+        const result = await unlinkClients(linkId)
+        if ('error' in result && result.error) {
+          setError(result.error)
+          return
+        }
+        setOverlay((current) => ({ ...current, removedLinkIds: [...current.removedLinkIds, linkId] }))
+      }
+      setNotice(`Unlinked ${member.otherName}. Both records are still saved.`)
+      onRefresh?.()
+    })
+  }
+
+  async function handleCreateLinked(input: QuickAddInput, relation: ClientLinkRelation) {
+    setError(null)
+    setNotice(null)
+    const data = new FormData()
+    data.set('anchorId', draft.id)
+    data.set('anchorKind', draft.kind)
+    data.set('anchorName', draft.name)
+    data.set('relation', relation)
+    data.set('kind', input.kind)
+    data.set('name', input.name)
+    data.set('phone', input.phone)
+    data.set('email', input.email)
+    data.set('programmeId', input.programmeId)
+    data.set('dateOfBirth', input.dateOfBirth)
+    data.set('selfPay', input.selfPay ? 'yes' : 'no')
+    const result = await createLinkedClient(data)
+    if ('error' in result && result.error) return result.error
+    if (!('ok' in result) || !result.ok) return 'The record could not be saved. Try again.'
+    const { record, link } = result
+    setOverlay((current) => ({
+      ...current,
+      clients: [...current.clients, record],
+      links: link ? [...current.links, link] : current.links,
+    }))
+    if (!draft.id) {
+      setDraft((current) => ({ ...current, pendingLinks: [...current.pendingLinks, { otherId: record.id, relation }] }))
+    }
+    setNotice(result.notice)
+    onRefresh?.()
+    return null
+  }
 
   return (
     <div className="clients-portal">
@@ -494,10 +729,17 @@ export function ClientManagement({
                         key={client.id}
                         type="button"
                         className={`clients-card${selectedId === client.id || draft.id === client.id ? ' is-on' : ''}`}
-                        onClick={() => selectClient(client)}
+                        onClick={() => {
+                          if (client.id === draft.id || confirmLeave()) selectClient(client)
+                        }}
                       >
                         <span className={`clients-kind kind-${client.kind}`}>{CLIENT_KIND_LABELS[client.kind]}</span>
                         <strong>{client.name}</strong>
+                        {familyLines.get(client.id) ? (
+                          <small className={`clients-card-family${client.kind === 'student' && !client.links.length ? ' is-self' : ''}`}>
+                            {familyLines.get(client.id)}
+                          </small>
+                        ) : null}
                         <span>
                           {CLIENT_STATUS_LABELS[client.status]}
                           {client.programmeName ? ` · ${client.programmeName}` : ''}
@@ -514,7 +756,7 @@ export function ClientManagement({
                       <h2>{draft.id ? (caps.canUpdate ? 'Edit record' : 'Record') : 'New record'}</h2>
                       <p>
                         {canMutate
-                          ? 'Primary type plus tags for dual roles. Links connect guardians, payers, and related parties.'
+                          ? 'Primary type plus tags for dual roles. Link parents and children from either side, and invoice from the record.'
                           : 'You can view this record. Ask leadership if you need create or edit access.'}
                       </p>
                     </div>
@@ -530,11 +772,22 @@ export function ClientManagement({
                         value={draft.kind}
                         onChange={(event) => {
                           const kind = event.target.value as ClientKind
+                          const keep = draft.pendingLinks.filter((link) => {
+                            const other = clientsById.get(link.otherId)
+                            return Boolean(other && orientLink({ id: SELF, kind }, { id: other.id, kind: other.kind }, link.relation))
+                          })
+                          if (keep.length < draft.pendingLinks.length) {
+                            const dropped = draft.pendingLinks.length - keep.length
+                            setNotice(
+                              `Removed ${dropped} link${dropped === 1 ? '' : 's'} that ${dropped === 1 ? 'does' : 'do'} not fit a ${CLIENT_KIND_LABELS[kind].toLowerCase()}.`,
+                            )
+                          }
                           setDraft((current) => ({
                             ...current,
                             kind,
                             status: kind === 'student' && current.status === 'active' ? 'enquiry' : current.status,
                             programmeId: kind === 'student' ? current.programmeId : '',
+                            pendingLinks: keep,
                           }))
                           if (kind !== 'student') {
                             setProgrammeChoice('')
@@ -729,81 +982,32 @@ export function ClientManagement({
                     </label>
                   </div>
 
-                  <div className="clients-links">
-                    <header>
-                      <Link2 aria-hidden="true" />
-                      <div>
-                        <strong>Links</strong>
-                        <p>Guardian of, pays for, or related — for parents who are also consulting clients, keep kind as guardian and add a consulting tag.</p>
-                      </div>
-                    </header>
-                    {draft.links.length === 0 ? <p className="td-muted">No links yet.</p> : null}
-                    <ul className="clients-link-list">
-                      {draft.links.map((link, index) => {
-                        const other = desk.clients.find((client) => client.id === link.toClientId)
-                        return (
-                          <li key={`${link.toClientId}-${link.relation}-${index}`}>
-                            <span>
-                              {CLIENT_LINK_LABELS[link.relation]} · {other?.name ?? 'Unknown'}
-                            </span>
-                            {canMutate ? (
-                              <button
-                                type="button"
-                                className="attachment-remove"
-                                onClick={() =>
-                                  setDraft((current) => ({
-                                    ...current,
-                                    links: current.links.filter((_, i) => i !== index),
-                                  }))
-                                }
-                              >
-                                Remove
-                              </button>
-                            ) : null}
-                          </li>
-                        )
-                      })}
-                    </ul>
-                    {canMutate ? (
-                      <div className="clients-link-add">
-                        <select value={linkRelation} onChange={(event) => setLinkRelation(event.target.value as ClientLinkRelation)}>
-                          {Object.entries(CLIENT_LINK_LABELS).map(([value, label]) => (
-                            <option key={value} value={value}>
-                              {label}
-                            </option>
-                          ))}
-                        </select>
-                        <select value={linkTargetId} onChange={(event) => setLinkTargetId(event.target.value)}>
-                          <option value="">Choose person…</option>
-                          {linkCandidates.map((client) => (
-                            <option key={client.id} value={client.id}>
-                              {client.name} · {CLIENT_KIND_LABELS[client.kind]}
-                            </option>
-                          ))}
-                        </select>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          disabled={!linkTargetId}
-                          onClick={() => {
-                            if (!linkTargetId) return
-                            setDraft((current) => ({
-                              ...current,
-                              links: [
-                                ...current.links.filter(
-                                  (link) => !(link.toClientId === linkTargetId && link.relation === linkRelation),
-                                ),
-                                { toClientId: linkTargetId, relation: linkRelation },
-                              ],
-                            }))
-                            setLinkTargetId('')
-                          }}
-                        >
-                          Add link
-                        </Button>
-                      </div>
-                    ) : null}
-                  </div>
+                  <ClientFamilyPanel
+                    key={`family-${draft.id || 'new'}`}
+                    self={familySelf}
+                    saved={Boolean(draft.id)}
+                    clients={allClients}
+                    clientsById={clientsById}
+                    programmes={programmes}
+                    caps={caps}
+                    canEdit={canMutate}
+                    busy={isPending}
+                    onOpen={openFromFamily}
+                    onLink={handleLink}
+                    onUnlink={handleUnlink}
+                    onCreateLinked={handleCreateLinked}
+                  />
+
+                  {savedRecord && desk.billing ? (
+                    <ClientInvoicesSection
+                      key={`invoices-${savedRecord.id}`}
+                      record={savedRecord}
+                      clientsById={clientsById}
+                      billing={desk.billing}
+                      caps={caps}
+                      onRefresh={onRefresh}
+                    />
+                  ) : null}
 
                   <div className="row-actions">
                     {canMutate ? (
@@ -831,8 +1035,11 @@ export function ClientManagement({
                       variant="outline"
                       disabled={isPending}
                       onClick={() => {
+                        if (!confirmLeave()) return
+                        const next = blankDraft(focus === 'students' ? 'student' : focus === 'guardians' ? 'guardian' : 'organization')
                         setSelectedId(null)
-                        setDraft(blankDraft(focus === 'students' ? 'student' : focus === 'guardians' ? 'guardian' : 'organization'))
+                        setDraft(next)
+                        setSavedSnapshot(JSON.stringify(next))
                       }}
                     >
                       Clear
@@ -1015,8 +1222,9 @@ export function ClientManagement({
       <aside className="clients-footnote">
         <Users aria-hidden="true" />
         <p>
-          Invoices stay under Admin office. Bill-to defaults to guardian or organisation for students unless self-pay is
-          enabled. Open <strong>Clients</strong> here for the full relationship house.
+          Add a parent or a student first, then link the other from either record. Invoices for a student go to their fee
+          payer or parent; with nobody linked they go to the student directly. Every invoice made here also shows under
+          <strong> Admin office → Invoices</strong>.
         </p>
       </aside>
     </div>

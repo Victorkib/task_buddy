@@ -38,6 +38,20 @@ export const CLIENT_LINK_LABELS: Record<ClientLinkRelation, string> = {
   related_to: 'Related to',
 }
 
+/** Wording seen from the parent / payer's record. */
+export const PARENT_SIDE_LABELS: Record<ClientLinkRelation, string> = {
+  guardian_of: 'Parent / guardian of',
+  payer_for: 'Pays fees for',
+  related_to: 'Related to',
+}
+
+/** Wording seen from the student's record. */
+export const CHILD_SIDE_LABELS: Record<ClientLinkRelation, string> = {
+  guardian_of: 'Parent / guardian',
+  payer_for: 'Fee payer',
+  related_to: 'Related to',
+}
+
 export type ClientLinkView = {
   id: string
   relation: ClientLinkRelation
@@ -92,6 +106,59 @@ export type ClientDeskCapabilities = {
   academyScoped: boolean
 }
 
+export type ClientInvoiceStatus = 'draft' | 'sent' | 'paid' | 'void'
+
+export type ClientInvoiceLine = {
+  id: string
+  description: string
+  quantityHundredths: number
+  rateCents: number
+  subjectClientId: string | null
+}
+
+export type ClientInvoiceView = {
+  id: string
+  documentNumber: string | null
+  status: ClientInvoiceStatus
+  issueDate: string
+  dueDate: string | null
+  clientId: string | null
+  clientName: string
+  clientEmail: string | null
+  clientPhone: string | null
+  clientAddress: string | null
+  clientPin: string | null
+  vatEnabled: boolean
+  vatRateBps: number
+  companyPin: string | null
+  paymentIds: string[]
+  notes: string | null
+  createdById: string | null
+  lines: ClientInvoiceLine[]
+}
+
+export type ClientPaymentAccount = {
+  id: string
+  label: string
+  kind: 'bank' | 'paybill' | 'other'
+  details: string
+  active: boolean
+}
+
+/** Invoicing from the Clients portal. Admin office issues; other client staff prepare drafts. */
+export type ClientBilling = {
+  ready: boolean
+  setupMessage: string | null
+  today: string
+  /** Admin office: may send, mark paid, void, and edit sent invoices. */
+  canIssue: boolean
+  currentUserId: string
+  mailReady: boolean
+  invoiceSettings: { vatEnabled: boolean; vatRateBps: number; companyPin: string | null }
+  paymentAccounts: ClientPaymentAccount[]
+  invoices: ClientInvoiceView[]
+}
+
 export type ClientDesk = {
   clients: ClientRecord[]
   programmes: AcademyProgrammeRecord[]
@@ -99,4 +166,5 @@ export type ClientDesk = {
   canManageBilling: boolean
   academyProgrammeIds: string[]
   capabilities: ClientDeskCapabilities
+  billing: ClientBilling | null
 }

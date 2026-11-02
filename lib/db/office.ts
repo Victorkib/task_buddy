@@ -726,6 +726,7 @@ async function loadOfficeDesk(user: OfficeViewer): Promise<OfficeDesk> {
           description: line.description,
           quantityHundredths: line.quantityHundredths,
           rateCents: line.rateCents,
+          subjectClientId: line.subjectClientId,
         })),
     })),
     mailReady: isMailConfigured(),

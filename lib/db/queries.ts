@@ -342,23 +342,38 @@ export async function listActivity(limit = 12, viewer?: CurrentUser | null) {
 }
 
 export async function getDashboardData(user: CurrentUser) {
-  const company = await getCompany()
-  if (company) {
-    await ensureNotificationPreferences(user.id)
-    await syncDeadlineAlertsForUser(user, company.id)
-  }
-
-  const overview = await getOverviewData(user)
-  const [responsibilities, allActivity, allTasks, notificationsList, unreadNotificationCount, managementRequestsList, notificationPrefs] =
-    await Promise.all([
-      listResponsibilities({ viewer: user }),
-      listActivity(20, user),
-      listTasks({ viewer: user }),
+  // Deadline alerts write notifications, so only the notification reads wait for them;
+  // everything else loads alongside instead of one query after another.
+  const notificationsReady = (async () => {
+    const company = await getCompany()
+    if (company) {
+      await ensureNotificationPreferences(user.id)
+      await syncDeadlineAlertsForUser(user, company.id)
+    }
+    return Promise.all([
       listNotifications(user.id, 25),
       getUnreadNotificationCount(user.id),
-      listManagementRequests(user),
       getNotificationPreferences(user.id),
     ])
+  })()
+
+  const [
+    overview,
+    responsibilities,
+    allActivity,
+    allTasks,
+    managementRequestsList,
+    projects,
+    [notificationsList, unreadNotificationCount, notificationPrefs],
+  ] = await Promise.all([
+    getOverviewData(user),
+    listResponsibilities({ viewer: user }),
+    listActivity(20, user),
+    listTasks({ viewer: user }),
+    listManagementRequests(user),
+    listProjects({ viewer: user }),
+    notificationsReady,
+  ])
 
   const myTasks = allTasks.filter((task) => task.assigneeId === user.id || task.helperIds?.includes(user.id))
   const myActive = myTasks.filter(
@@ -366,8 +381,6 @@ export async function getDashboardData(user: CurrentUser) {
   )
   const myCompleted = myTasks.filter((task) => task.status === 'completed')
   const myInProgress = myTasks.filter((task) => task.status === 'in_progress')
-
-  const projects = await listProjects({ viewer: user })
 
   return {
     ...overview,

@@ -15,6 +15,7 @@ import {
   setInvoiceStatus,
 } from '@/app/admin-office-actions'
 import { centsToAmount, parseAmountText } from '@/lib/admin-office/expenses'
+import { downloadBytes, printHtml } from '@/lib/admin-office/invoice-download'
 import {
   formatMoney,
   formatQuantity,
@@ -33,7 +34,8 @@ type Run = (
   onSuccess?: (result?: { id?: string; clientId?: string | null }) => void,
 ) => void
 
-type LineForm = { description: string; quantity: string; rate: string }
+/** subjectClientId carries the student a line was raised for in Clients, so edits here keep it. */
+type LineForm = { description: string; quantity: string; rate: string; subjectClientId: string }
 
 type InvoiceForm = {
   id: string
@@ -73,7 +75,7 @@ function blankInvoice(desk: OfficeDesk): InvoiceForm {
     companyPin: desk.invoiceSettings.companyPin ?? '',
     paymentIds: desk.paymentAccounts.filter((account) => account.active).map((account) => account.id),
     notes: '',
-    lines: [{ description: '', quantity: '1', rate: '' }],
+    lines: [{ description: '', quantity: '1', rate: '', subjectClientId: '' }],
   }
 }
 
@@ -99,31 +101,10 @@ function formFromInvoice(invoice: OfficeInvoice): InvoiceForm {
           description: line.description,
           quantity: formatQuantity(line.quantityHundredths),
           rate: centsToAmount(line.rateCents),
+          subjectClientId: line.subjectClientId ?? '',
         }))
-      : [{ description: '', quantity: '1', rate: '' }],
+      : [{ description: '', quantity: '1', rate: '', subjectClientId: '' }],
   }
-}
-
-function downloadBytes(filename: string, bytes: Uint8Array, type: string) {
-  const blob = new Blob([bytes], { type })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  link.click()
-  URL.revokeObjectURL(url)
-}
-
-function printHtml(html: string) {
-  const win = window.open('', '_blank')
-  if (!win) return false
-  const printable = html.includes('<base ') ? html : html.replace('<head>', `<head><base href="${window.location.origin}/">`)
-  win.document.open()
-  win.document.write(printable)
-  win.document.close()
-  win.focus()
-  win.print()
-  return true
 }
 
 function blankClient() {
@@ -136,7 +117,7 @@ function blankPayment(): { id: string; label: string; kind: 'bank' | 'paybill' |
 
 type DrawerKind = 'invoice' | 'clients' | 'payments' | null
 
-function OfficeDrawer({
+export function OfficeDrawer({
   title,
   subtitle,
   badge,
@@ -497,6 +478,11 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
                     <div key={index} className="invoice-line">
                       <label className="invoice-line-desc">
                         <span className="sr-only">Description</span>
+                        {line.subjectClientId ? (
+                          <em className="invoice-line-subject">
+                            For {desk.clients.find((client) => client.id === line.subjectClientId)?.name ?? 'a student'}
+                          </em>
+                        ) : null}
                         <input
                           value={line.description}
                           placeholder="Description"
@@ -567,7 +553,7 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
                   onClick={() =>
                     setForm((current) => ({
                       ...current,
-                      lines: [...current.lines, { description: '', quantity: '1', rate: '' }],
+                      lines: [...current.lines, { description: '', quantity: '1', rate: '', subjectClientId: '' }],
                     }))
                   }
                 >

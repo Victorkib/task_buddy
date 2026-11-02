@@ -21,19 +21,15 @@ import {
 } from '@/lib/admin-office/expenses'
 import {
   amountWithinLimit,
-  buildInvoiceHtml,
   formatMoney,
-  invoicePlainText,
   invoiceTotals,
-  lineAmountCents,
-  parsePaymentSnapshot,
   outlookMailLink,
   outlookMessage,
-  parseQuantity,
   parseVatRate,
   type PaymentKind,
 } from '@/lib/admin-office/invoices'
 import { buildOfferLetter, buildStaffLetter } from '@/lib/admin-office/letters'
+import { invoiceFile, parseInvoiceLineRows } from '@/lib/admin-office/invoice-records'
 import { embeddedLetterheadSrc } from '@/lib/admin-office/letterhead-embed'
 import {
   CARRY_CAP_HUNDREDTHS,
@@ -1321,46 +1317,6 @@ async function officeGate() {
   return loaded
 }
 
-function invoiceFile(invoice: {
-  documentNumber: string | null
-  issueDate: string
-  dueDate: string | null
-  clientName: string
-  clientEmail: string | null
-  clientAddress: string | null
-  clientPin: string | null
-  companyPin: string | null
-  vatEnabled: boolean
-  vatRateBps: number
-  notes: string | null
-  paymentSnapshot: string
-  lines: { description: string; quantityHundredths: number; rateCents: number }[]
-}) {
-  const payments = parsePaymentSnapshot(invoice.paymentSnapshot)
-  const lines = [...invoice.lines]
-  const shared = {
-    documentNumber: invoice.documentNumber ?? 'Invoice',
-    issueDate: invoice.issueDate,
-    dueDate: invoice.dueDate,
-    clientName: invoice.clientName,
-    companyPin: invoice.companyPin,
-    vatEnabled: invoice.vatEnabled,
-    vatRateBps: invoice.vatRateBps,
-    lines,
-    payments: Array.isArray(payments) ? payments : [],
-    notes: invoice.notes,
-  }
-  const html = buildInvoiceHtml({
-    ...shared,
-    clientEmail: invoice.clientEmail,
-    clientAddress: invoice.clientAddress,
-    clientPin: invoice.clientPin,
-    letterhead: embeddedLetterheadSrc(),
-  })
-  const filename = `${(invoice.documentNumber ?? 'invoice').replace(/[^\w.-]+/g, '-')}.html`
-  return { html, filename, text: invoicePlainText(shared), subject: `Invoice ${shared.documentNumber} from Globecon Convergence Solutions` }
-}
-
 export async function saveInvoiceSettings(formData: FormData) {
   const loaded = await officeGate()
   if ('error' in loaded) return loaded
@@ -1468,28 +1424,13 @@ export async function deleteClient(id: string) {
 }
 
 function invoiceLinesFromForm(formData: FormData) {
-  const raw = field(formData, 'lines')
   let parsed: unknown
   try {
-    parsed = JSON.parse(raw)
+    parsed = JSON.parse(field(formData, 'lines'))
   } catch {
     return { error: 'Add at least one line to the invoice.' as const }
   }
-  if (!Array.isArray(parsed) || parsed.length === 0 || parsed.length > 40) return { error: 'Add between 1 and 40 lines.' as const }
-  const lines: { description: string; quantityHundredths: number; rateCents: number }[] = []
-  for (const item of parsed) {
-    if (!item || typeof item !== 'object') return { error: 'Check the invoice lines.' as const }
-    const row = item as Record<string, unknown>
-    const description = typeof row.description === 'string' ? cleanBlock(row.description, 300) : ''
-    const quantity = typeof row.quantity === 'string' ? parseQuantity(row.quantity) : null
-    const rate = typeof row.rate === 'string' ? parseAmountText(row.rate) : null
-    if (!description) return { error: 'Each line needs a description.' as const }
-    if (quantity == null) return { error: 'Enter a quantity such as 1 or 1.5.' as const }
-    if (rate == null) return { error: 'Enter each rate in shillings, such as 25000.' as const }
-    if (!amountWithinLimit(lineAmountCents(quantity, rate))) return { error: 'One of the line amounts is too large.' as const }
-    lines.push({ description, quantityHundredths: quantity, rateCents: rate })
-  }
-  return { lines }
+  return parseInvoiceLineRows(parsed)
 }
 
 export async function saveInvoice(formData: FormData) {
@@ -1510,6 +1451,22 @@ export async function saveInvoice(formData: FormData) {
   if ('error' in parsedLines) return parsedLines
   const totals = invoiceTotals(parsedLines.lines, vatEnabled, vatRateBps)
   if (!amountWithinLimit(totals.totalCents)) return { error: 'The invoice total is too large.' as const }
+  // Lines keep the student they were raised for (set from Clients); drop any that left this workspace.
+  const subjectIds = [...new Set(parsedLines.lines.flatMap((line) => (line.subjectClientId ? [line.subjectClientId] : [])))]
+  const knownSubjects = subjectIds.length
+    ? new Set(
+        (
+          await getDb()
+            .select({ id: officeClients.id })
+            .from(officeClients)
+            .where(and(eq(officeClients.companyId, loaded.currentUser.companyId), inArray(officeClients.id, subjectIds)))
+        ).map((row) => row.id),
+      )
+    : new Set<string>()
+  const lines = parsedLines.lines.map((line) => ({
+    ...line,
+    subjectClientId: line.subjectClientId && knownSubjects.has(line.subjectClientId) ? line.subjectClientId : null,
+  }))
   const paymentIds = formData.getAll('paymentId').filter((value): value is string => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value))
   const accounts = paymentIds.length
     ? await getDb().select().from(officePaymentAccounts).where(and(eq(officePaymentAccounts.companyId, loaded.currentUser.companyId), inArray(officePaymentAccounts.id, paymentIds)))
@@ -1579,7 +1536,7 @@ export async function saveInvoice(formData: FormData) {
     await getDb().update(officeInvoices).set(snapshot).where(eq(officeInvoices.id, id))
     const previous = existing.lines.map((line) => line.id)
     await getDb().insert(officeInvoiceLines).values(
-      parsedLines.lines.map((line, position) => ({ invoiceId: id, position, ...line })),
+      lines.map((line, position) => ({ invoiceId: id, position, ...line })),
     )
     if (previous.length > 0) await getDb().delete(officeInvoiceLines).where(inArray(officeInvoiceLines.id, previous))
   } else {
@@ -1597,7 +1554,7 @@ export async function saveInvoice(formData: FormData) {
     invoiceId = created?.id ?? ''
     if (invoiceId) {
       await getDb().insert(officeInvoiceLines).values(
-        parsedLines.lines.map((line, position) => ({ invoiceId, position, ...line })),
+        lines.map((line, position) => ({ invoiceId, position, ...line })),
       )
     }
   }

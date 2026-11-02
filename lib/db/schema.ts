@@ -1478,8 +1478,13 @@ export const officeInvoiceLines = pgTable(
     description: text('description').notNull(),
     quantityHundredths: integer('quantity_hundredths').notNull(),
     rateCents: integer('rate_cents').notNull(),
+    /** The student (or other party) this line is for, when billing a guardian or sponsor. */
+    subjectClientId: uuid('subject_client_id').references(() => officeClients.id, { onDelete: 'set null' }),
   },
-  (table) => [index('office_invoice_lines_invoice_idx').on(table.invoiceId, table.position)],
+  (table) => [
+    index('office_invoice_lines_invoice_idx').on(table.invoiceId, table.position),
+    index('office_invoice_lines_subject_idx').on(table.subjectClientId),
+  ],
 )
 
 export const officeInvoiceSettingsRelations = relations(officeInvoiceSettings, ({ one }) => ({
