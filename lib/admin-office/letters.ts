@@ -8,7 +8,6 @@ export const GLOBECON_STATIONERY = {
   box: 'P.O. Box 1092-00618, Nairobi',
   office: 'Juja Professional Centre, Juja',
   website: 'www.globeconcs.com',
-  email: 'md@globeconcs.com',
   infoEmail: 'info@globeconcs.com',
   gmail: 'globeconconvergencesolutions@gmail.com',
   phone: '+254 116 993 399',
@@ -129,7 +128,7 @@ function addressBlock(dateLabel: string, companyName = GLOBECON_STATIONERY.name)
       <p>${escapeHtml(s.box)}</p>
       <p>${escapeHtml(s.office)}</p>
       <p>${escapeHtml(s.website)}</p>
-      <p>Email: ${escapeHtml(s.email)} · ${escapeHtml(s.infoEmail)}</p>
+      <p>Email: ${escapeHtml(s.infoEmail)}</p>
       <p>Phone: ${escapeHtml(s.phone)} · ${escapeHtml(s.phoneAlt)}</p>
     </div>
     <div class="date">Date: ${escapeHtml(dateLabel)}</div>

@@ -239,7 +239,7 @@ export function buildInvoiceHtml(input: {
         <p>${escapeHtml(firm.box)}</p>
         <p>${escapeHtml(firm.office)}</p>
         <p>${escapeHtml(firm.phone)} · ${escapeHtml(firm.phoneAlt)}</p>
-        <p>${escapeHtml(firm.email)} · ${escapeHtml(firm.infoEmail)}</p>
+        <p>${escapeHtml(firm.infoEmail)}</p>
         <p>${escapeHtml(firm.gmail)}</p>
         <p>${escapeHtml(firm.website)}${input.companyPin ? ` · KRA PIN: ${escapeHtml(input.companyPin)}` : ''}</p>
       </div>
@@ -302,7 +302,7 @@ export function invoicePlainText(input: {
     firm.box,
     firm.office,
     `${firm.phone} · ${firm.phoneAlt}`,
-    `${firm.email} · ${firm.infoEmail}`,
+    firm.infoEmail,
     firm.website,
     input.companyPin ? `KRA PIN: ${input.companyPin}` : '',
     `Bill to: ${input.clientName}`,
