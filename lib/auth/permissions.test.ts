@@ -17,6 +17,7 @@ import {
   canDecideAdminRequest,
   canManageStaffRecords,
   canRunAdminOffice,
+  hasFullClientAccess,
   canSubmitAdminRequest,
   canViewCompanyReports,
   canViewDepartmentReports,
@@ -183,6 +184,10 @@ const carolyn = {
 assert(canRunAdminOffice(carolyn), 'finance head runs the admin office')
 assert(canRunAdminOffice(md) && canRunAdminOffice(admin), 'management can open the admin office')
 assert(!canRunAdminOffice(head), 'other department heads do not run the admin office')
+const fullClient = { canView: true, canCreate: true, canUpdate: true, canDelete: true }
+assert(hasFullClientAccess(fullClient), 'full client access is view, create, edit, and delete')
+assert(!hasFullClientAccess({ ...fullClient, canDelete: false }), 'missing delete is not full client access')
+assert(!hasFullClientAccess({ canView: true, canCreate: true, canUpdate: false, canDelete: false }), 'create alone does not issue invoices')
 assert(canSubmitAdminRequest(employee), 'staff can send office requests')
 assert(canDecideAdminRequest(carolyn, 'emp'), 'admin office decides other people')
 assert(!canDecideAdminRequest(carolyn, 'carolyn'), 'admin office cannot decide its own request')

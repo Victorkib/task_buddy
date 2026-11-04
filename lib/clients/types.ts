@@ -145,12 +145,12 @@ export type ClientPaymentAccount = {
   active: boolean
 }
 
-/** Invoicing from the Clients portal. Admin office issues; other client staff prepare drafts. */
+/** Invoicing from the Clients portal. Full client access issues; create-only staff prepare drafts. */
 export type ClientBilling = {
   ready: boolean
   setupMessage: string | null
   today: string
-  /** Admin office: may send, mark paid, void, and edit sent invoices. */
+  /** Full client access or the admin office: may send, mark paid, void, and edit sent invoices. */
   canIssue: boolean
   currentUserId: string
   mailReady: boolean

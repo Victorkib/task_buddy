@@ -5,7 +5,7 @@ import { revalidatePath } from 'next/cache'
 import { parseInvoiceLineRows, invoiceFile, type ParsedInvoiceLine } from '@/lib/admin-office/invoice-records'
 import { amountWithinLimit, invoiceTotals, parseVatRate, type PaymentKind } from '@/lib/admin-office/invoices'
 import { isIsoDate } from '@/lib/admin-office/leave'
-import { canRunAdminOffice } from '@/lib/auth/permissions'
+import { hasFullClientAccess } from '@/lib/auth/permissions'
 import { getDb } from '@/lib/db'
 import { invoiceInvolves, loadClientScope } from '@/lib/db/clients'
 import { nextOfficeNumber } from '@/lib/db/office'
@@ -29,13 +29,13 @@ function emailOrEmpty(value: string) {
   return value
 }
 
-/** Admin office issues invoices; anyone who can create client records may prepare drafts. */
+/** Full client access issues invoices. Create access is enough to prepare drafts. */
 async function billingGate() {
   const currentUser = await getCurrentUser()
   if (!currentUser) return { error: 'Not signed in.' as const }
   const scope = await loadClientScope(currentUser)
   if (!scope) return { error: 'You are not allowed to open client management.' as const }
-  const canIssue = canRunAdminOffice(currentUser)
+  const canIssue = hasFullClientAccess(scope.capabilities)
   if (!canIssue && !scope.capabilities.canCreate) {
     return { error: 'You are not allowed to prepare invoices. Ask leadership for create access under Clients.' as const }
   }
@@ -155,7 +155,7 @@ export async function saveClientInvoices(payload: unknown) {
     const existing = found.invoice
     if (existing.status === 'void') return { error: 'A void invoice stays as it was. Start a new invoice instead.' as const }
     if (!canIssue && existing.status !== 'draft') {
-      return { error: 'This invoice has been sent. Only the admin office can change it now.' as const }
+      return { error: 'This invoice has been sent. Full client access is required to change it now.' as const }
     }
     const [plan] = plans
     await getDb()
@@ -239,7 +239,7 @@ export async function clientInvoiceFile(id: string) {
   return { ok: true as const, html: file.html, filename: file.filename }
 }
 
-/** Drafts only. Staff outside the admin office may remove drafts they prepared themselves. */
+/** Drafts only. Full client access may remove any draft they can see. Create access may remove drafts they prepared. */
 export async function deleteClientInvoice(id: string) {
   const gate = await billingGate()
   if ('error' in gate) return gate
@@ -249,7 +249,7 @@ export async function deleteClientInvoice(id: string) {
     return { error: 'Only a draft can be deleted. Void a sent invoice instead, so the number stays on record.' as const }
   }
   if (!gate.canIssue && found.invoice.createdById !== gate.currentUser.id) {
-    return { error: 'Only the admin office, or the person who prepared this draft, can delete it.' as const }
+    return { error: 'Only someone with full client access, or the person who prepared this draft, can delete it.' as const }
   }
   await getDb().delete(officeInvoices).where(eq(officeInvoices.id, id))
   refresh()

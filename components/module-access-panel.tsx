@@ -167,7 +167,12 @@ export function ModuleAccessPanel({
             ))}
           </div>
 
-          <p className="field-hint">{moduleMeta.description}</p>
+          <p className="field-hint">
+            {moduleMeta.description}
+            {moduleKey === 'clients'
+              ? ' View, Create, Edit, and Delete together also let this person send invoices and record payment from the client record.'
+              : ''}
+          </p>
 
           <label className="form-field">
             <span>Person</span>

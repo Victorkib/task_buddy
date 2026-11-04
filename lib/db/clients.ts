@@ -5,6 +5,7 @@ import {
   canAccessClientManagement,
   canManageClientBilling,
   canRunAdminOffice,
+  hasFullClientAccess,
   resolveClientCapabilities,
 } from '@/lib/auth/permissions'
 import { isFamilyRelation } from '@/lib/clients/family'
@@ -220,8 +221,7 @@ function asInvoiceStatus(value: string): ClientInvoiceStatus {
 }
 
 /** Runs alongside the directory load; `visible` resolves once it is known who this person can see. */
-async function loadClientBilling(user: CurrentUser, visible: Promise<Set<string>>): Promise<ClientBilling> {
-  const canIssue = canRunAdminOffice(user)
+async function loadClientBilling(user: CurrentUser, visible: Promise<Set<string>>, canIssue: boolean): Promise<ClientBilling> {
   const base: ClientBilling = {
     ready: true,
     setupMessage: null,
@@ -310,6 +310,7 @@ export async function getClientDesk(user: CurrentUser): Promise<ClientDesk | nul
   const access = await resolveClientAccess(user)
   if (!access) return null
   const canInvoice = canRunAdminOffice(user) || access.capabilities.canCreate
+  const canIssue = hasFullClientAccess(access.capabilities)
 
   // Directory, programmes, and billing load together rather than one after another.
   const scopeLoad = buildClientScope(user, access)
@@ -320,7 +321,7 @@ export async function getClientDesk(user: CurrentUser): Promise<ClientDesk | nul
       with: { leads: { with: { user: true } } },
       orderBy: [asc(academyProgrammes.sortOrder), asc(academyProgrammes.name)],
     }),
-    canInvoice ? loadClientBilling(user, scopeLoad.then((loaded) => loaded.visibleIds)) : Promise.resolve(null),
+    canInvoice ? loadClientBilling(user, scopeLoad.then((loaded) => loaded.visibleIds), canIssue) : Promise.resolve(null),
   ])
   const { capabilities, fullAccess, leadProgrammeIds, linksByClient, visibleRows, visibleIds } = scope
 

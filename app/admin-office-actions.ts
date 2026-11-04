@@ -6,6 +6,7 @@ import {
   ADMIN_OFFICE_DEPARTMENT_SLUG,
   canDecideAdminRequest,
   canRunAdminOffice,
+  hasFullClientAccess,
   canSubmitAdminRequest,
   isAdmin,
   isManagement,
@@ -41,6 +42,7 @@ import {
 } from '@/lib/admin-office/policy'
 import type { AdminRequestKind, EmploymentType, LeaveType, OfficeLetterType } from '@/lib/admin-office/types'
 import { getDb } from '@/lib/db'
+import { invoiceInvolves, loadClientScope } from '@/lib/db/clients'
 import { nextOfficeNumber } from '@/lib/db/office'
 import { getCurrentUser } from '@/lib/db/queries'
 import {
@@ -1317,6 +1319,23 @@ async function officeGate() {
   return loaded
 }
 
+/** Admin office may issue any company invoice. Full client access may issue invoices for people they can see. */
+async function issueInvoiceGate(id: string) {
+  const currentUser = await getCurrentUser()
+  if (!currentUser) return { error: 'Not signed in.' as const }
+  const invoice = await getDb().query.officeInvoices.findFirst({ where: eq(officeInvoices.id, id), with: { lines: true } })
+  if (!invoice || invoice.companyId !== currentUser.companyId) return { error: 'That invoice is no longer there.' as const }
+  if (canRunAdminOffice(currentUser)) return { currentUser, invoice }
+  const scope = await loadClientScope(currentUser)
+  if (!scope || !hasFullClientAccess(scope.capabilities)) {
+    return { error: 'Full client access is required to send this invoice or record payment.' as const }
+  }
+  if (!invoiceInvolves(invoice, scope.visibleIds)) {
+    return { error: 'That invoice is for someone outside the records you manage.' as const }
+  }
+  return { currentUser, invoice }
+}
+
 export async function saveInvoiceSettings(formData: FormData) {
   const loaded = await officeGate()
   if ('error' in loaded) return loaded
@@ -1568,11 +1587,9 @@ export async function saveInvoice(formData: FormData) {
 }
 
 export async function setInvoiceStatus(id: string, status: string) {
-  const loaded = await officeGate()
+  const loaded = await issueInvoiceGate(id)
   if ('error' in loaded) return loaded
   if (!INVOICE_STATUSES.has(status)) return { error: 'Choose draft, sent, paid, or void.' }
-  const existing = await getDb().query.officeInvoices.findFirst({ where: eq(officeInvoices.id, id) })
-  if (!existing || existing.companyId !== loaded.currentUser.companyId) return { error: 'That invoice is no longer there.' }
   await getDb().update(officeInvoices).set({ status, updatedAt: new Date() }).where(eq(officeInvoices.id, id))
   refresh()
   const labels: Record<string, string> = { draft: 'Marked as a draft.', sent: 'Marked as sent.', paid: 'Marked as paid.', void: 'Invoice voided.' }
@@ -1608,7 +1625,7 @@ export async function previewInvoice(id: string) {
 }
 
 export async function emailInvoice(id: string) {
-  const loaded = await officeGate()
+  const loaded = await issueInvoiceGate(id)
   if ('error' in loaded) return loaded
   if (!isMailConfigured()) return { error: 'The shared Task Buddy mailbox is not set up on this workspace yet. Use Open in Outlook instead.' }
   const found = await savedInvoice(id, loaded.currentUser.companyId, 'send')
@@ -1638,7 +1655,7 @@ export async function emailInvoice(id: string) {
 }
 
 export async function outlookInvoice(id: string) {
-  const loaded = await officeGate()
+  const loaded = await issueInvoiceGate(id)
   if ('error' in loaded) return loaded
   const found = await savedInvoice(id, loaded.currentUser.companyId, 'send')
   if ('error' in found) return found

@@ -164,7 +164,7 @@ export function ClientInvoicesSection({
 
       {!billing.ready && billing.setupMessage ? <p className="invoice-note invoice-note-warn">{billing.setupMessage}</p> : null}
       {!billing.canIssue ? (
-        <p className="invoice-note">You prepare drafts here. The admin office sends them and records payment.</p>
+        <p className="invoice-note">You prepare drafts here. Sending and recording payment needs full client access: view, create, edit, and delete.</p>
       ) : null}
       {error ? <p className="form-error">{error}</p> : null}
       {notice ? <p className="form-success">{notice}</p> : null}
@@ -644,7 +644,7 @@ function InvoiceComposer({
           <p className="invoice-note">
             {billing.canIssue
               ? 'Open any invoice from the list to email it, mark it sent, or record payment.'
-              : 'The admin office sees these drafts in Admin office → Invoices and sends them.'}
+              : 'Someone with full client access can open these drafts here and send them.'}
           </p>
         </div>
       ) : (
@@ -655,7 +655,7 @@ function InvoiceComposer({
                 ? 'This invoice is void. Start a new invoice for a replacement.'
                 : billToHidden
                   ? 'This invoice is billed to a record outside your directory, so it opens read-only. You can still download or print it.'
-                  : 'This invoice has been sent, so only the admin office can change it. You can still download or print it.'}
+                  : 'This invoice has been sent. Someone with full client access can change it. You can still download or print it.'}
             </p>
           ) : null}
 

@@ -192,6 +192,13 @@ export function resolveClientCapabilities(
   }
 }
 
+/** View, create, edit, and delete on Clients. That set also issues invoices from the client record. */
+export function hasFullClientAccess(
+  capabilities: Pick<ModuleCapability, 'canView' | 'canCreate' | 'canUpdate' | 'canDelete'> | null | undefined,
+) {
+  return Boolean(capabilities?.canView && capabilities.canCreate && capabilities.canUpdate && capabilities.canDelete)
+}
+
 export function canManageStaffRecords(user: Actor) {
   return canManageUsers(user) || canRunAdminOffice(user)
 }
