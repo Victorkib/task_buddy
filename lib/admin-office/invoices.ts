@@ -98,6 +98,31 @@ export function amountWithinLimit(cents: number) {
   return cents >= 0 && cents <= MAX_CENTS
 }
 
+/** Official M-PESA details printed on every invoice. */
+export const GLOBECON_MPESA = {
+  paybill: '522533',
+  account: '8004596',
+  accountName: 'GlobeCon Convergence Solutions Ltd',
+} as const
+
+export function mpesaInstruction() {
+  const pay = GLOBECON_MPESA
+  return `Kindly make payment through M-PESA Paybill Number ${pay.paybill} and Account Number ${pay.account} (${pay.accountName}).`
+}
+
+/** Shown beside optional extra accounts in the invoice form. */
+export const MPESA_ON_EVERY_INVOICE = `M-PESA Paybill ${GLOBECON_MPESA.paybill}, account ${GLOBECON_MPESA.account} (${GLOBECON_MPESA.accountName}) is printed on every invoice.`
+
+function extraPayments(payments: PaymentSnapshot[]) {
+  return payments.filter(
+    (payment) => !(payment.details.includes(GLOBECON_MPESA.paybill) && payment.details.includes(GLOBECON_MPESA.account)),
+  )
+}
+
+function htmlBlock(value: string) {
+  return escapeHtml(value).replaceAll('\n', '<br>')
+}
+
 export function buildInvoiceHtml(input: {
   assetBase?: string
   letterhead?: string
@@ -121,28 +146,27 @@ export function buildInvoiceHtml(input: {
     .map((line) => {
       const amount = lineAmountCents(line.quantityHundredths, line.rateCents)
       return `<tr>
-        <td>${escapeHtml(line.description)}</td>
+        <td>${htmlBlock(line.description)}</td>
         <td class="num">${formatQuantity(line.quantityHundredths)}</td>
         <td class="num">${formatMoney(line.rateCents)}</td>
         <td class="num">${formatMoney(amount)}</td>
       </tr>`
     })
     .join('')
-  const payments = input.payments.length
-    ? input.payments
-        .map(
-          (payment) => `<div class="pay">
-            <strong>${escapeHtml(payment.label)}</strong>
-            <pre>${escapeHtml(payment.details)}</pre>
-          </div>`,
-        )
-        .join('')
-    : '<p>Payment details will be added on this invoice.</p>'
-  const pin = input.companyPin ? `<p>PIN: ${escapeHtml(input.companyPin)}</p>` : ''
-  const clientPin = input.clientPin ? `<p>PIN: ${escapeHtml(input.clientPin)}</p>` : ''
+  const extras = extraPayments(input.payments)
+    .map(
+      (payment) => `<div class="pay extra">
+        <strong>${escapeHtml(payment.label)}</strong>
+        <p>${htmlBlock(payment.details)}</p>
+      </div>`,
+    )
+    .join('')
+  const clientPin = input.clientPin ? `<p>KRA PIN: ${escapeHtml(input.clientPin)}</p>` : ''
   const vatRow = input.vatEnabled
-    ? `<tr><td>VAT ${formatVatRate(input.vatRateBps)}</td><td>${formatMoney(totals.vatCents)}</td></tr>`
+    ? `<tr><td>VAT ${formatVatRate(input.vatRateBps)}</td><td class="num">${formatMoney(totals.vatCents)}</td></tr>`
     : ''
+  const title = input.vatEnabled ? 'TAX INVOICE' : 'INVOICE'
+  const firm = GLOBECON_STATIONERY
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -152,69 +176,101 @@ export function buildInvoiceHtml(input: {
     @page { size: A4; margin: 0; }
     html, body { margin: 0; padding: 0; background: #e8eef6; }
     .sheet {
-      width: 210mm; min-height: 297mm; margin: 0 auto; box-sizing: border-box;
-      padding: 38mm 16mm 28mm; background: #fff url('${src}') no-repeat top center;
-      background-size: 210mm 297mm; color: #1c2430;
+      position: relative; width: 210mm; min-height: 297mm; margin: 0 auto; box-sizing: border-box;
+      padding: 42mm 16mm 34mm; background: #fff; color: #1c2430;
       font-family: Calibri, "Segoe UI", Arial, sans-serif; font-size: 11pt; line-height: 1.4;
       -webkit-print-color-adjust: exact; print-color-adjust: exact;
     }
-    h1 { margin: 0 0 4px; font-size: 20pt; color: #1a2f6b; letter-spacing: .04em; }
-    .meta { display: flex; justify-content: space-between; gap: 24px; margin: 8px 0 16px; }
-    .meta p, .who p { margin: 2px 0; }
-    .who strong { color: #1a2f6b; }
+    .sheet::before, .sheet::after {
+      content: ""; position: absolute; left: 0; width: 210mm; pointer-events: none; z-index: 0;
+      background: #fff url('${src}') no-repeat; background-size: 210mm 297mm;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+    .sheet::before { top: 0; height: 48mm; background-position: top center; }
+    .sheet::after { bottom: 0; height: 32mm; background-position: bottom center; }
+    .sheet > * { position: relative; z-index: 1; }
+    .banner { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; padding-bottom: 8px; border-bottom: 2px solid #1a2f6b; }
+    h1 { margin: 0; font-size: 22pt; color: #1a2f6b; letter-spacing: .14em; }
+    .doc { text-align: right; }
+    .doc p, .who p { margin: 1px 0; }
+    .doc .num { font-size: 12pt; font-weight: 700; color: #1a2f6b; }
+    .parties { display: flex; justify-content: space-between; gap: 28px; margin-top: 12px; }
+    .who p { line-height: 1.35; font-size: 10.5pt; }
+    .parties > div { flex: 1; min-width: 0; }
+    .label { margin: 0 0 3px; font-size: 8.5pt; letter-spacing: .12em; text-transform: uppercase; color: #5c6b82; }
+    .who strong { color: #1a2f6b; font-size: 12pt; }
     table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-    th { text-align: left; font-size: 10pt; letter-spacing: .04em; text-transform: uppercase; color: #5c6b82; border-bottom: 2px solid #1a2f6b; padding: 6px 4px; }
-    td { border-bottom: 1px solid #d5deea; padding: 7px 4px; vertical-align: top; }
+    th { text-align: left; font-size: 9pt; letter-spacing: .06em; text-transform: uppercase; color: #5c6b82; background: #f4f7fb; border-bottom: 2px solid #1a2f6b; padding: 7px 6px; }
+    td { border-bottom: 1px solid #d5deea; padding: 6px; vertical-align: top; }
     .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-    .totals { width: 240px; margin-left: auto; margin-top: 8px; }
-    .totals td { border: 0; padding: 3px 0; }
-    .totals tr.grand td { border-top: 2px solid #1a2f6b; font-weight: 700; font-size: 12pt; color: #1a2f6b; }
-    .pay { margin-top: 8px; }
-    .pay pre { margin: 2px 0 0; font-family: Calibri, "Segoe UI", Arial, sans-serif; white-space: pre-wrap; }
-    .notes { margin-top: 14px; }
-    h2 { margin: 18px 0 6px; font-size: 12pt; color: #1a2f6b; }
+    .totals { width: 250px; margin-left: auto; margin-top: 6px; }
+    .totals td { border: 0; padding: 3px 0; background: transparent; }
+    .totals tr.grand td { border-top: 2px solid #1a2f6b; font-weight: 700; font-size: 12pt; color: #1a2f6b; padding-top: 6px; }
+    h2 { margin: 14px 0 6px; font-size: 12pt; color: #1a2f6b; }
+    .pay { border: 1px solid #d5deea; border-left: 4px solid #1a2f6b; background: #f8fafc; padding: 10px 12px; }
+    .pay p { margin: 0; }
+    .pay-grid { display: grid; grid-template-columns: 148px 1fr; gap: 3px 12px; margin: 8px 0 0; }
+    .pay-grid dt { margin: 0; color: #5c6b82; }
+    .pay-grid dd { margin: 0; font-weight: 700; }
+    .pay.extra { margin-top: 8px; }
+    .pay.extra p { margin-top: 2px; white-space: pre-wrap; }
+    .notes { margin-top: 14px; padding-top: 8px; border-top: 1px solid #d5deea; }
+    .notes p { margin: 2px 0 0; }
     @media print {
       html, body { background: #fff; }
-      .sheet { margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .sheet { margin: 0; box-shadow: none; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     }
   </style>
 </head>
 <body>
   <article class="sheet">
-    <h1>INVOICE</h1>
-    <div class="meta">
-      <div class="who">
-        <strong>${escapeHtml(GLOBECON_STATIONERY.name)}</strong>
-        <p>${escapeHtml(GLOBECON_STATIONERY.box)}</p>
-        <p>${escapeHtml(GLOBECON_STATIONERY.office)}</p>
-        <p>${escapeHtml(GLOBECON_STATIONERY.email)} · ${escapeHtml(GLOBECON_STATIONERY.phone)}</p>
-        ${pin}
-      </div>
-      <div>
-        <p><strong>${escapeHtml(input.documentNumber)}</strong></p>
+    <header class="banner">
+      <h1>${title}</h1>
+      <div class="doc">
+        <p class="num">${escapeHtml(input.documentNumber)}</p>
         <p>Issued ${escapeHtml(globeconDate(input.issueDate))}</p>
         ${input.dueDate ? `<p>Due ${escapeHtml(globeconDate(input.dueDate))}</p>` : ''}
       </div>
-    </div>
-    <div class="who">
-      <p>Bill to</p>
-      <strong>${escapeHtml(input.clientName)}</strong>
-      ${input.clientAddress ? `<p>${escapeHtml(input.clientAddress).replaceAll('\n', '<br>')}</p>` : ''}
-      ${input.clientEmail ? `<p>${escapeHtml(input.clientEmail)}</p>` : ''}
-      ${clientPin}
+    </header>
+    <div class="parties">
+      <div class="who">
+        <p class="label">From</p>
+        <strong>${escapeHtml(firm.name)}</strong>
+        <p>${escapeHtml(firm.box)}</p>
+        <p>${escapeHtml(firm.office)}</p>
+        <p>${escapeHtml(firm.phone)} · ${escapeHtml(firm.phoneAlt)}</p>
+        <p>${escapeHtml(firm.email)} · ${escapeHtml(firm.infoEmail)}</p>
+        <p>${escapeHtml(firm.gmail)}</p>
+        <p>${escapeHtml(firm.website)}${input.companyPin ? ` · KRA PIN: ${escapeHtml(input.companyPin)}` : ''}</p>
+      </div>
+      <div class="who">
+        <p class="label">Bill to</p>
+        <strong>${escapeHtml(input.clientName)}</strong>
+        ${input.clientAddress ? `<p>${htmlBlock(input.clientAddress)}</p>` : ''}
+        ${input.clientEmail ? `<p>${escapeHtml(input.clientEmail)}</p>` : ''}
+        ${clientPin}
+      </div>
     </div>
     <table>
       <thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Amount</th></tr></thead>
-      <tbody>${rows}</tbody>
+      <tbody>${rows || '<tr><td colspan="4">No lines on this invoice.</td></tr>'}</tbody>
     </table>
     <table class="totals">
       <tr><td>Subtotal</td><td class="num">${formatMoney(totals.subtotalCents)}</td></tr>
       ${vatRow}
-      <tr class="grand"><td>Total</td><td class="num">${formatMoney(totals.totalCents)}</td></tr>
+      <tr class="grand"><td>Total due</td><td class="num">${formatMoney(totals.totalCents)}</td></tr>
     </table>
     <h2>How to pay</h2>
-    ${payments}
-    ${input.notes ? `<div class="notes"><strong>Note</strong><p>${escapeHtml(input.notes).replaceAll('\n', '<br>')}</p></div>` : ''}
+    <div class="pay">
+      <p>${escapeHtml(mpesaInstruction())}</p>
+      <dl class="pay-grid">
+        <dt>Paybill number</dt><dd>${GLOBECON_MPESA.paybill}</dd>
+        <dt>Account number</dt><dd>${GLOBECON_MPESA.account}</dd>
+        <dt>Account name</dt><dd>${escapeHtml(GLOBECON_MPESA.accountName)}</dd>
+      </dl>
+    </div>
+    ${extras}
+    ${input.notes ? `<div class="notes"><strong>Note</strong><p>${htmlBlock(input.notes)}</p></div>` : ''}
   </article>
 </body>
 </html>`
@@ -236,11 +292,19 @@ export function invoicePlainText(input: {
   const lines = input.lines
     .map((line) => `${line.description} × ${formatQuantity(line.quantityHundredths)} = ${formatMoney(lineAmountCents(line.quantityHundredths, line.rateCents))}`)
     .join('\n')
-  const payments = input.payments.map((payment) => `${payment.label}\n${payment.details}`).join('\n\n')
+  const extras = extraPayments(input.payments)
+    .map((payment) => `${payment.label}\n${payment.details}`)
+    .join('\n\n')
+  const firm = GLOBECON_STATIONERY
   return [
     `Invoice ${input.documentNumber}`,
-    `From ${GLOBECON_STATIONERY.name}`,
-    input.companyPin ? `PIN: ${input.companyPin}` : '',
+    `From ${firm.name}`,
+    firm.box,
+    firm.office,
+    `${firm.phone} · ${firm.phoneAlt}`,
+    `${firm.email} · ${firm.infoEmail}`,
+    firm.website,
+    input.companyPin ? `KRA PIN: ${input.companyPin}` : '',
     `Bill to: ${input.clientName}`,
     `Issued ${input.issueDate}`,
     input.dueDate ? `Due ${input.dueDate}` : '',
@@ -249,9 +313,9 @@ export function invoicePlainText(input: {
     '',
     `Subtotal: ${formatMoney(totals.subtotalCents)}`,
     input.vatEnabled ? `VAT ${formatVatRate(input.vatRateBps)}: ${formatMoney(totals.vatCents)}` : '',
-    `Total: ${formatMoney(totals.totalCents)}`,
+    `Total due: ${formatMoney(totals.totalCents)}`,
     '',
-    payments ? `How to pay:\n${payments}` : '',
+    `How to pay:\n${mpesaInstruction()}${extras ? `\n\n${extras}` : ''}`,
     input.notes ? `\n${input.notes}` : '',
     '',
     'The invoice is attached.',

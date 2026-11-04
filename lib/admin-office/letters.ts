@@ -2,13 +2,17 @@ import { letterheadSrc } from '@/lib/admin-office/letterhead'
 import { LETTER_TYPE_LABELS } from '@/lib/admin-office/policy'
 import type { OfficeLetterType } from '@/lib/admin-office/types'
 
-/** Stationery block taken from Globecon proposal letters. */
+/** Contacts taken from the current Globecon letterhead. */
 export const GLOBECON_STATIONERY = {
   name: 'Globecon Convergence Solutions Limited',
-  box: 'P.o Box 1092 – 00618, Nairobi',
+  box: 'P.O. Box 1092-00618, Nairobi',
   office: 'Juja Professional Centre, Juja',
+  website: 'www.globeconcs.com',
   email: 'md@globeconcs.com',
-  phone: '+254 725 275 610',
+  infoEmail: 'info@globeconcs.com',
+  gmail: 'globeconconvergencesolutions@gmail.com',
+  phone: '+254 116 993 399',
+  phoneAlt: '+254 755 101 101',
 }
 
 const MONTHS = [
@@ -55,13 +59,13 @@ function letterShell(title: string, inner: string, options?: { assetBase?: strin
     @page { size: A4; margin: 0; }
     html, body { margin: 0; padding: 0; background: #e8eef6; }
     .sheet {
+      position: relative;
       width: 210mm;
       min-height: 297mm;
       margin: 0 auto;
       box-sizing: border-box;
-      padding: 38mm 18mm 32mm;
-      background: #fff url('${src}') no-repeat top center;
-      background-size: 210mm 297mm;
+      padding: 46mm 18mm 42mm;
+      background: #fff;
       color: #1c2430;
       font-family: Calibri, "Segoe UI", Arial, sans-serif;
       font-size: 12pt;
@@ -69,6 +73,21 @@ function letterShell(title: string, inner: string, options?: { assetBase?: strin
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
     }
+    .sheet::before, .sheet::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      width: 210mm;
+      pointer-events: none;
+      z-index: 0;
+      background: #fff url('${src}') no-repeat;
+      background-size: 210mm 297mm;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .sheet::before { top: 0; height: 50mm; background-position: top center; }
+    .sheet::after { bottom: 0; height: 40mm; background-position: bottom center; }
+    .sheet > * { position: relative; z-index: 1; }
     .who { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; }
     .who strong { display: block; font-size: 13pt; color: #1a2f6b; }
     .who p { margin: 2px 0; font-size: 11pt; color: #243044; }
@@ -109,8 +128,9 @@ function addressBlock(dateLabel: string, companyName = GLOBECON_STATIONERY.name)
       <strong>${escapeHtml(legalName(companyName))}</strong>
       <p>${escapeHtml(s.box)}</p>
       <p>${escapeHtml(s.office)}</p>
-      <p>Email: ${escapeHtml(s.email)}</p>
-      <p>Phone: ${escapeHtml(s.phone)}</p>
+      <p>${escapeHtml(s.website)}</p>
+      <p>Email: ${escapeHtml(s.email)} · ${escapeHtml(s.infoEmail)}</p>
+      <p>Phone: ${escapeHtml(s.phone)} · ${escapeHtml(s.phoneAlt)}</p>
     </div>
     <div class="date">Date: ${escapeHtml(dateLabel)}</div>
   </div>

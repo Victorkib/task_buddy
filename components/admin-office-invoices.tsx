@@ -20,6 +20,7 @@ import {
   formatMoney,
   formatQuantity,
   invoiceTotals,
+  MPESA_ON_EVERY_INVOICE,
   parseQuantity,
   parseVatRate,
   vatRateInput,
@@ -595,17 +596,16 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
               <header className="invoice-section-head">
                 <div>
                   <h3>Ways to pay</h3>
-                  <p>Copied onto the invoice when you save</p>
+                  <p>The M-PESA details are always on the invoice. Extra accounts are added when you tick them.</p>
                 </div>
               </header>
+              <p className="invoice-note">{MPESA_ON_EVERY_INVOICE}</p>
               {saved && saved.payments.some((payment) => !desk.paymentAccounts.some((account) => account.id === payment.id)) ? (
                 <p className="invoice-note invoice-note-warn">
                   This invoice still has payment wording from an account that was removed. Saving drops that wording unless you add the account again first.
                 </p>
               ) : null}
-              {desk.paymentAccounts.length === 0 ? (
-                <p className="invoice-note">No bank or paybill details yet. Add them under VAT and payment details.</p>
-              ) : (
+              {desk.paymentAccounts.length === 0 ? null : (
                 <div className="invoice-pay-list">
                   {desk.paymentAccounts.map((account) => (
                     <label key={account.id} className={`invoice-pay-option${form.paymentIds.includes(account.id) ? ' selected' : ''}`}>
@@ -850,7 +850,7 @@ function PaymentsView({
           <strong>{form.id ? 'Edit a way to pay' : 'Add a way to pay'}</strong>
         </div>
         <p className="field-hint">
-          Add the bank account, the paybill, or both. On each invoice you choose which of these to show, so one client can be asked to pay by bank and another by paybill.
+          {MPESA_ON_EVERY_INVOICE} Add a bank account here only when a client should also see another way to pay. Tick the ones that belong on each invoice.
         </p>
         <div className="form-grid">
           <label>

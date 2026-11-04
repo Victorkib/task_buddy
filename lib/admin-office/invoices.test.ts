@@ -51,8 +51,33 @@ const html = buildInvoiceHtml({
 })
 assert(html.includes('P051234567B'), 'the company PIN on the invoice is the one saved for it')
 assert(html.includes('Paybill: 123456'), 'the chosen paybill is printed')
+assert(html.includes('522533'), 'the M-PESA paybill is printed')
+assert(html.includes('8004596'), 'the M-PESA account number is printed')
+assert(html.includes('GlobeCon Convergence Solutions Ltd'), 'the M-PESA account name is printed')
+assert(html.includes('+254 116 993 399'), 'the letterhead phone is printed')
+assert(html.includes('info@globeconcs.com'), 'the info address from the letterhead is printed')
+assert(html.includes('www.globeconcs.com'), 'the website from the letterhead is printed')
 assert(html.includes('globecon-letterhead.jpg'), 'the invoice uses the Globecon letterhead')
 assert(html.includes('KES 63,800.00'), 'the total is printed')
+assert(html.includes('TAX INVOICE'), 'a VAT invoice is marked as a tax invoice')
+assert(!html.includes('Payment details will be added'), 'the invoice no longer uses a payment placeholder')
+const samePaybill = buildInvoiceHtml({
+  documentNumber: 'GCS-INV-2026-0002',
+  issueDate: '2026-10-13',
+  dueDate: null,
+  clientName: 'Hewane School of Music',
+  clientEmail: null,
+  clientAddress: null,
+  clientPin: null,
+  companyPin: null,
+  vatEnabled: false,
+  vatRateBps: 0,
+  lines,
+  payments: [{ id: '1', label: 'M-PESA', kind: 'paybill', details: 'Paybill 522533\nAccount 8004596' }],
+  notes: null,
+})
+assert(!samePaybill.includes('>M-PESA<'), 'the official paybill is not printed a second time')
+assert(samePaybill.includes('>INVOICE<'), 'an invoice without VAT is not marked as a tax invoice')
 
 const text = invoicePlainText({
   documentNumber: 'GCS-INV-2026-0001',
@@ -73,6 +98,7 @@ const message = outlookMessage({
   filename: 'GCS-INV-2026-0001.html',
   html,
 })
+assert(text.includes('522533') && text.includes('8004596'), 'the email copy includes the M-PESA details')
 assert(message.startsWith('To: accounts@example.com'), 'Outlook opens addressed to the client')
 assert(message.includes('Subject: Invoice GCS-INV-2026-0001'), 'the subject is filled in')
 assert(message.includes('Content-Disposition: attachment'), 'the invoice is attached')

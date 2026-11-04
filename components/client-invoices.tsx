@@ -12,6 +12,7 @@ import {
   formatMoney,
   formatQuantity,
   invoiceTotals,
+  MPESA_ON_EVERY_INVOICE,
   parseQuantity,
   parseVatRate,
   vatRateInput,
@@ -911,14 +912,11 @@ function InvoiceComposer({
               <header className="invoice-section-head">
                 <div>
                   <h3>Ways to pay</h3>
-                  <p>Copied onto the invoice when you save</p>
+                  <p>The M-PESA details are always on the invoice. Extra accounts are added when you tick them.</p>
                 </div>
               </header>
-              {accounts.length === 0 ? (
-                <p className="invoice-note">
-                  No bank or paybill details yet. The admin office adds them under Admin office → Invoices → VAT and payment details.
-                </p>
-              ) : (
+              <p className="invoice-note">{MPESA_ON_EVERY_INVOICE}</p>
+              {accounts.length === 0 ? null : (
                 <div className="invoice-pay-list">
                   {accounts.map((account) => (
                     <label key={account.id} className={`invoice-pay-option${paymentIds.includes(account.id) ? ' selected' : ''}`}>

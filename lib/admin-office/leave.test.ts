@@ -60,6 +60,8 @@ const letter = buildStaffLetter({
   today: '2026-10-05',
 })
 assert(letter.includes('Juja Professional Centre'), 'letter uses the Juja address')
+assert(letter.includes('+254 116 993 399'), 'letter uses the current letterhead phone')
+assert(letter.includes('www.globeconcs.com'), 'letter includes the website')
 assert(letter.includes('>01</span> | Purpose'), 'letter uses numbered sections')
 assert(letter.includes('5th October 2026'), 'letter dates read like a Globecon letter')
 assert(letter.includes('globecon-letterhead.jpg'), 'letter sits on the letterhead')
