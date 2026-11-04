@@ -1,7 +1,7 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
-import { GraduationCap, Plus, Search, Users } from 'lucide-react'
+import { useMemo, useRef, useState, useTransition } from 'react'
+import { FileText, GraduationCap, Pencil, Plus, Receipt, Search, Users } from 'lucide-react'
 import {
   createLinkedClient,
   deleteAcademyProgramme,
@@ -13,6 +13,7 @@ import {
 } from '@/app/clients-actions'
 import { ClientFamilyPanel, type QuickAddInput } from '@/components/client-family'
 import { ClientInvoicesSection } from '@/components/client-invoices'
+import { ClientReceiptsSection } from '@/components/client-receipts'
 import { Button } from '@/components/ui/button'
 import { UserAvatar } from '@/components/user-avatar'
 import {
@@ -145,6 +146,22 @@ function recordFromDraft(draft: Draft, id: string, programmeName: string | null)
   }
 }
 
+function profileFacts(record: ClientRecord) {
+  const facts: { label: string; value: string }[] = []
+  if (record.email) facts.push({ label: 'Email', value: record.email })
+  if (record.phone) facts.push({ label: 'Phone', value: record.phone })
+  if (record.programmeName) facts.push({ label: 'Programme', value: record.programmeName })
+  if (record.dateOfBirth) facts.push({ label: 'Date of birth', value: record.dateOfBirth })
+  if (record.kind === 'student') facts.push({ label: 'Billing', value: record.selfPay ? 'Student may be billed directly' : 'Billed through family' })
+  if (record.pin) facts.push({ label: 'PIN', value: record.pin })
+  if (record.source) facts.push({ label: 'Source', value: record.source })
+  if (record.address) facts.push({ label: 'Address', value: record.address })
+  if (record.tags.length) facts.push({ label: 'Tags', value: record.tags.join(', ') })
+  if (record.specification) facts.push({ label: 'Specification', value: record.specification })
+  if (record.notes) facts.push({ label: 'Notes', value: record.notes })
+  return facts
+}
+
 function namesLine(names: string[]) {
   if (names.length <= 2) return names.join(' & ')
   return `${names.slice(0, 2).join(', ')} +${names.length - 2}`
@@ -164,6 +181,12 @@ export function ClientManagement({
   onRefresh?: () => void
 }) {
   const [isPending, startTransition] = useTransition()
+  const [editing, setEditing] = useState(false)
+  const [composing, setComposing] = useState(false)
+  const [invoiceCompose, setInvoiceCompose] = useState(0)
+  const [receiptCompose, setReceiptCompose] = useState(0)
+  const [receiptInvoiceId, setReceiptInvoiceId] = useState<string | null>(null)
+  const moneyRef = useRef<HTMLDivElement>(null)
   const [focus, setFocus] = useState<Focus>(desk.capabilities.fullDirectory ? 'directory' : 'students')
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | ClientStatus>('all')
@@ -242,6 +265,8 @@ export function ClientManagement({
     setSavedSnapshot(JSON.stringify(next))
     setProgrammeChoice(client.programmeId ?? '')
     setCustomProgrammeName('')
+    setEditing(false)
+    setComposing(false)
     setError(null)
     setNotice(null)
     if (client.kind === 'student') setFocus('students')
@@ -256,6 +281,8 @@ export function ClientManagement({
     setSavedSnapshot(JSON.stringify(next))
     setProgrammeChoice('')
     setCustomProgrammeName('')
+    setEditing(false)
+    setComposing(true)
     setError(null)
     setNotice(null)
     if (kind === 'student') setFocus('students')
@@ -375,6 +402,8 @@ export function ClientManagement({
         }
         setDraft(saved)
         setSavedSnapshot(JSON.stringify(saved))
+        setEditing(false)
+        setComposing(false)
         if (result.id) setSelectedId(result.id)
         onRefresh?.()
       }
@@ -395,6 +424,8 @@ export function ClientManagement({
         setSelectedId(null)
         setDraft(next)
         setSavedSnapshot(JSON.stringify(next))
+        setEditing(false)
+        setComposing(false)
         setNotice(result.notice)
         onRefresh?.()
       }
@@ -465,6 +496,18 @@ export function ClientManagement({
   }
 
   const savedRecord = draft.id ? clientsById.get(draft.id) ?? null : null
+  const viewing = Boolean(savedRecord) && !editing
+  const showForm = composing || (Boolean(savedRecord) && editing)
+  const profile = viewing ? savedRecord : null
+
+  function revealMoney(open: 'invoice' | 'receipt', invoiceId: string | null = null) {
+    if (open === 'invoice') setInvoiceCompose(Date.now())
+    else {
+      setReceiptInvoiceId(invoiceId)
+      setReceiptCompose(Date.now())
+    }
+    window.setTimeout(() => moneyRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+  }
 
   // Saved records show their stored links; a new record shows the links it will be saved with.
   const familySelf = useMemo(() => {
@@ -751,20 +794,74 @@ export function ClientManagement({
                 </div>
 
                 <div className="clients-editor project-section-docs">
-                  <header className="project-section-head">
-                    <div>
-                      <h2>{draft.id ? (caps.canUpdate ? 'Edit record' : 'Record') : 'New record'}</h2>
-                      <p>
-                        {canMutate
-                          ? 'Primary type plus tags for dual roles. Link parents and children from either side, and invoice from the record.'
-                          : 'You can view this record. Ask leadership if you need create or edit access.'}
+                  {profile ? (
+                    <header className="client-profile">
+                      <div className="client-profile-id">
+                        <span className={`clients-kind kind-${profile.kind}`}>{CLIENT_KIND_LABELS[profile.kind]}</span>
+                        <span className={`client-profile-status status-${profile.status}`}>{CLIENT_STATUS_LABELS[profile.status]}</span>
+                      </div>
+                      <h2>{profile.name}</h2>
+                      <p className="client-profile-meta">
+                        {[profile.programmeName, familyLines.get(profile.id), profile.phone, profile.email].filter(Boolean).join(' · ') || 'No contact details yet'}
                       </p>
+                      <div className="client-profile-actions">
+                        {caps.canUpdate ? (
+                          <Button type="button" variant="outline" onClick={() => setEditing(true)}>
+                            <Pencil aria-hidden="true" /> Edit
+                          </Button>
+                        ) : null}
+                        {desk.billing ? (
+                          <Button type="button" className="create-button" disabled={!desk.billing.ready} onClick={() => revealMoney('invoice')}>
+                            <FileText aria-hidden="true" /> New invoice
+                          </Button>
+                        ) : null}
+                        {desk.billing?.canIssue ? (
+                          <Button type="button" variant="outline" onClick={() => revealMoney('receipt')}>
+                            <Receipt aria-hidden="true" /> Record payment
+                          </Button>
+                        ) : null}
+                        {caps.canDelete ? (
+                          <Button type="button" variant="outline" disabled={isPending} onClick={() => runDelete(profile.id)}>
+                            Remove
+                          </Button>
+                        ) : null}
+                      </div>
+                    </header>
+                  ) : (
+                    <header className="project-section-head">
+                      <div>
+                        <h2>{draft.id ? 'Edit record' : 'New record'}</h2>
+                        <p>
+                          {canMutate
+                            ? 'Primary type plus tags for dual roles. Link parents and children from either side, and invoice from the record.'
+                            : 'You can view this record. Ask leadership if you need create or edit access.'}
+                        </p>
+                      </div>
+                    </header>
+                  )}
+                  {!viewing && !showForm ? (
+                    <div className="client-profile-empty">
+                      <h2>Choose a record</h2>
+                      <p>Select a student, parent, or guardian to see their details, family, invoices, and receipts. Add someone new from the buttons above.</p>
                     </div>
-                  </header>
-                  {!canMutate && !draft.id ? (
-                    <p className="td-muted">Select a record to view details, or request create access in Settings → Module access.</p>
                   ) : null}
 
+                  {profile ? (
+                    <dl className="client-profile-facts">
+                      {profileFacts(profile).length === 0 ? (
+                        <p className="td-muted">No extra details yet.{caps.canUpdate ? ' Edit to add a phone, email, or notes.' : ''}</p>
+                      ) : (
+                        profileFacts(profile).map((fact) => (
+                          <div key={fact.label}>
+                            <dt>{fact.label}</dt>
+                            <dd>{fact.value}</dd>
+                          </div>
+                        ))
+                      )}
+                    </dl>
+                  ) : null}
+
+                  {showForm ? (
                   <div className={`clients-form-grid${canMutate ? '' : ' is-readonly'}`}>
                     <label className="form-field">
                       <span>Type</span>
@@ -981,7 +1078,9 @@ export function ClientManagement({
                       />
                     </label>
                   </div>
+                  ) : null}
 
+                  {showForm || viewing ? (
                   <ClientFamilyPanel
                     key={`family-${draft.id || 'new'}`}
                     self={familySelf}
@@ -997,18 +1096,33 @@ export function ClientManagement({
                     onUnlink={handleUnlink}
                     onCreateLinked={handleCreateLinked}
                   />
-
-                  {savedRecord && desk.billing ? (
-                    <ClientInvoicesSection
-                      key={`invoices-${savedRecord.id}`}
-                      record={savedRecord}
-                      clientsById={clientsById}
-                      billing={desk.billing}
-                      caps={caps}
-                      onRefresh={onRefresh}
-                    />
                   ) : null}
 
+                  {savedRecord && desk.billing ? (
+                    <div className="client-money" ref={moneyRef}>
+                      <ClientInvoicesSection
+                        key={`invoices-${savedRecord.id}`}
+                        record={savedRecord}
+                        clientsById={clientsById}
+                        billing={desk.billing}
+                        caps={caps}
+                        composeToken={invoiceCompose}
+                        onRecordPayment={(invoiceId) => revealMoney('receipt', invoiceId)}
+                        onRefresh={onRefresh}
+                      />
+                      <ClientReceiptsSection
+                        key={`receipts-${savedRecord.id}`}
+                        record={savedRecord}
+                        clientsById={clientsById}
+                        billing={desk.billing}
+                        composeToken={receiptCompose}
+                        presetInvoiceId={receiptInvoiceId}
+                        onRefresh={onRefresh}
+                      />
+                    </div>
+                  ) : null}
+
+                  {showForm ? (
                   <div className="row-actions">
                     {canMutate ? (
                       <Button
@@ -1025,26 +1139,43 @@ export function ClientManagement({
                         {isPending ? 'Saving…' : draft.id ? 'Save changes' : 'Create record'}
                       </Button>
                     ) : null}
-                    {draft.id && caps.canDelete ? (
-                      <Button type="button" variant="outline" disabled={isPending} onClick={() => runDelete(draft.id)}>
-                        Remove
+                    {draft.id ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={isPending}
+                        onClick={() => {
+                          if (!confirmLeave()) return
+                          if (savedRecord) {
+                            const next = fromRecord(savedRecord)
+                            setDraft(next)
+                            setSavedSnapshot(JSON.stringify(next))
+                            setProgrammeChoice(savedRecord.programmeId ?? '')
+                          }
+                          setEditing(false)
+                        }}
+                      >
+                        Cancel
                       </Button>
-                    ) : null}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={isPending}
-                      onClick={() => {
-                        if (!confirmLeave()) return
-                        const next = blankDraft(focus === 'students' ? 'student' : focus === 'guardians' ? 'guardian' : 'organization')
-                        setSelectedId(null)
-                        setDraft(next)
-                        setSavedSnapshot(JSON.stringify(next))
-                      }}
-                    >
-                      Clear
-                    </Button>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={isPending}
+                        onClick={() => {
+                          if (!confirmLeave()) return
+                          const next = blankDraft(focus === 'students' ? 'student' : focus === 'guardians' ? 'guardian' : 'organization')
+                          setSelectedId(null)
+                          setDraft(next)
+                          setSavedSnapshot(JSON.stringify(next))
+                          setComposing(false)
+                        }}
+                      >
+                        Clear
+                      </Button>
+                    )}
                   </div>
+                  ) : null}
                 </div>
               </div>
             </section>

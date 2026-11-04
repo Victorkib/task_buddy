@@ -17,6 +17,7 @@ import type {
   ClientDesk,
   ClientInvoiceStatus,
   ClientKind,
+  ClientReceiptView,
   ClientLinkRelation,
   ClientLinkView,
   ClientRecord,
@@ -31,6 +32,7 @@ import {
   officeInvoiceSettings,
   officeInvoices,
   officePaymentAccounts,
+  officeReceipts,
 } from '@/lib/db/schema'
 import { isMailConfigured } from '@/lib/mail/send'
 import type { CurrentUser } from '@/lib/types'
@@ -232,10 +234,11 @@ async function loadClientBilling(user: CurrentUser, visible: Promise<Set<string>
     invoiceSettings: { vatEnabled: true, vatRateBps: 1600, companyPin: null },
     paymentAccounts: [],
     invoices: [],
+    receipts: [],
   }
   try {
     const db = getDb()
-    const [settings, accountRows, invoiceRows] = await Promise.all([
+    const [settings, accountRows, invoiceRows, receiptRows] = await Promise.all([
       db.query.officeInvoiceSettings.findFirst({ where: eq(officeInvoiceSettings.companyId, user.companyId) }),
       db.query.officePaymentAccounts.findMany({
         where: eq(officePaymentAccounts.companyId, user.companyId),
@@ -246,6 +249,7 @@ async function loadClientBilling(user: CurrentUser, visible: Promise<Set<string>
         with: { lines: true },
         orderBy: [desc(officeInvoices.createdAt)],
       }),
+      db.select().from(officeReceipts).where(eq(officeReceipts.companyId, user.companyId)).orderBy(desc(officeReceipts.createdAt)),
     ])
     const visibleIds = await visible
     return {
@@ -292,6 +296,30 @@ async function loadClientBilling(user: CurrentUser, visible: Promise<Set<string>
               subjectClientId: line.subjectClientId,
             })),
         })),
+      receipts: receiptRows
+        .filter(
+          (row) =>
+            (row.clientId != null && visibleIds.has(row.clientId)) ||
+            (row.relatedClientId != null && visibleIds.has(row.relatedClientId)),
+        )
+        .map(
+          (row): ClientReceiptView => ({
+            id: row.id,
+            documentNumber: row.documentNumber,
+            clientId: row.clientId,
+            relatedClientId: row.relatedClientId,
+            invoiceId: row.invoiceId,
+            amountCents: row.amountCents,
+            payerName: row.payerName,
+            payerPhone: row.payerPhone,
+            accountName: row.accountName,
+            accountNumber: row.accountNumber,
+            paidOn: String(row.paidOn).slice(0, 10),
+            paidAtLabel: row.paidAtLabel,
+            mpesaRef: row.mpesaRef,
+            description: row.description,
+          }),
+        ),
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : ''

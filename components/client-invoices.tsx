@@ -93,15 +93,24 @@ export function ClientInvoicesSection({
   clientsById,
   billing,
   caps,
+  composeToken = 0,
+  onRecordPayment,
   onRefresh,
 }: {
   record: ClientRecord
   clientsById: Map<string, ClientRecord>
   billing: ClientBilling
   caps: ClientDeskCapabilities
+  composeToken?: number
+  onRecordPayment?: (invoiceId: string) => void
   onRefresh?: () => void
 }) {
   const [composer, setComposer] = useState<{ editing: ClientInvoiceView | null; seq: number } | null>(null)
+  const [seenCompose, setSeenCompose] = useState(composeToken)
+  if (composeToken !== seenCompose) {
+    setSeenCompose(composeToken)
+    if (composeToken > 0) setComposer({ editing: null, seq: composeToken })
+  }
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -225,6 +234,7 @@ export function ClientInvoicesSection({
           billing={billing}
           caps={caps}
           editing={composer.editing}
+          onRecordPayment={onRecordPayment}
           onClose={() => setComposer(null)}
           onDone={(message) => {
             setComposer(null)
@@ -335,6 +345,7 @@ function InvoiceComposer({
   billing,
   caps,
   editing,
+  onRecordPayment,
   onClose,
   onDone,
   onRefresh,
@@ -344,6 +355,7 @@ function InvoiceComposer({
   billing: ClientBilling
   caps: ClientDeskCapabilities
   editing: ClientInvoiceView | null
+  onRecordPayment?: (invoiceId: string) => void
   onClose: () => void
   onDone: (notice: string) => void
   onRefresh?: () => void
@@ -1062,6 +1074,19 @@ function InvoiceComposer({
                         {live.status !== 'paid' ? (
                           <Button type="button" variant="outline" disabled={pending} onClick={() => run(() => setInvoiceStatus(live.id, 'paid'), onRefresh)}>
                             Mark as paid
+                          </Button>
+                        ) : null}
+                        {onRecordPayment ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={pending}
+                            onClick={() => {
+                              onClose()
+                              onRecordPayment(live.id)
+                            }}
+                          >
+                            Record payment
                           </Button>
                         ) : null}
                         <Button

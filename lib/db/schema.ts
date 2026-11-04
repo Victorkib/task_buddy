@@ -1554,6 +1554,38 @@ export const officeInvoicesRelations = relations(officeInvoices, ({ one, many })
   lines: many(officeInvoiceLines),
 }))
 
+export const officeReceipts = pgTable(
+  'office_receipts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    clientId: uuid('client_id').references(() => officeClients.id, { onDelete: 'set null' }),
+    relatedClientId: uuid('related_client_id').references(() => officeClients.id, { onDelete: 'set null' }),
+    invoiceId: uuid('invoice_id').references(() => officeInvoices.id, { onDelete: 'set null' }),
+    documentNumber: text('document_number'),
+    amountCents: integer('amount_cents').notNull(),
+    payerName: text('payer_name').notNull(),
+    payerPhone: text('payer_phone'),
+    accountName: text('account_name'),
+    accountNumber: text('account_number'),
+    paidOn: date('paid_on').notNull(),
+    paidAtLabel: text('paid_at_label'),
+    mpesaRef: text('mpesa_ref').notNull(),
+    description: text('description').notNull(),
+    sourceText: text('source_text'),
+    createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('office_receipts_number_idx').on(table.documentNumber),
+    uniqueIndex('office_receipts_ref_idx').on(table.companyId, table.mpesaRef),
+    index('office_receipts_client_idx').on(table.clientId),
+    index('office_receipts_related_idx').on(table.relatedClientId),
+  ],
+)
+
 export const officeInvoiceLinesRelations = relations(officeInvoiceLines, ({ one }) => ({
   invoice: one(officeInvoices, { fields: [officeInvoiceLines.invoiceId], references: [officeInvoices.id] }),
 }))

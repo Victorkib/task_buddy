@@ -137,6 +137,23 @@ export type ClientInvoiceView = {
   lines: ClientInvoiceLine[]
 }
 
+export type ClientReceiptView = {
+  id: string
+  documentNumber: string | null
+  clientId: string | null
+  relatedClientId: string | null
+  invoiceId: string | null
+  amountCents: number
+  payerName: string
+  payerPhone: string | null
+  accountName: string | null
+  accountNumber: string | null
+  paidOn: string
+  paidAtLabel: string | null
+  mpesaRef: string
+  description: string
+}
+
 export type ClientPaymentAccount = {
   id: string
   label: string
@@ -157,6 +174,7 @@ export type ClientBilling = {
   invoiceSettings: { vatEnabled: boolean; vatRateBps: number; companyPin: string | null }
   paymentAccounts: ClientPaymentAccount[]
   invoices: ClientInvoiceView[]
+  receipts: ClientReceiptView[]
 }
 
 export type ClientDesk = {

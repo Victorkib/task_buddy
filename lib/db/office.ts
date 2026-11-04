@@ -175,7 +175,7 @@ async function ensureOfficeRecords(companyId: string, year: number) {
   }
 }
 
-export async function nextOfficeNumber(prefix: 'HR' | 'OFR' | 'DOC' | 'INV') {
+export async function nextOfficeNumber(prefix: 'HR' | 'OFR' | 'DOC' | 'INV' | 'RCT') {
   const year = Number(nairobiToday().slice(0, 4))
   const key = `GCS-${prefix}-${year}`
   const [row] = await getDb()

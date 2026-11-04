@@ -26,10 +26,11 @@ export function printHtml(html: string) {
  * Opens the print window during the click itself, so pop-up blockers allow it,
  * and the invoice is written in once it has loaded.
  */
-export function openPrintWindow() {
+export function openPrintWindow(kind: 'invoice' | 'receipt' = 'invoice') {
+  const label = kind === 'receipt' ? 'receipt' : 'invoice'
   const win = window.open('', '_blank')
   if (win) {
-    win.document.write('<!doctype html><title>Preparing invoice…</title><p style="font:14px system-ui;padding:24px">Preparing the invoice…</p>')
+    win.document.write(`<!doctype html><title>Preparing ${label}…</title><p style="font:14px system-ui;padding:24px">Preparing the ${label}…</p>`)
   }
   return win
 }
