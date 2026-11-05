@@ -136,11 +136,53 @@ export function parseMpesaConfirmation(raw: string): MpesaPayment | null {
   }
 }
 
+export type ReceiptCoverLine = {
+  personId: string | null
+  personName: string
+  description: string
+  amountCents: number
+}
+
 export type ReceiptCover = {
   personId: string | null
   personName: string
   invoiceNumber: string | null
   amountCents: number
+  /** One row per child and course, in the same shape as the invoice lines this payment settles. */
+  lines?: ReceiptCoverLine[]
+}
+
+/**
+ * Split a payment across invoice lines so each row names one child and one charge.
+ * A full payment keeps each course amount (VAT shared onto those courses). A part
+ * payment uses the same proportions and still adds up to the money received.
+ */
+export function settlementLines(input: {
+  appliedCents: number
+  vatCents?: number
+  lines: ReceiptCoverLine[]
+}): ReceiptCoverLine[] {
+  const source = input.lines.filter((line) => line.description.trim() && line.amountCents > 0)
+  if (!source.length || !Number.isInteger(input.appliedCents) || input.appliedCents <= 0) return []
+  const subtotal = source.reduce((sum, line) => sum + line.amountCents, 0)
+  if (subtotal <= 0) return []
+  const vat = Math.max(0, input.vatCents ?? 0)
+  const weights = source.map((line) => line.amountCents + (vat * line.amountCents) / subtotal)
+  const weightTotal = weights.reduce((sum, weight) => sum + weight, 0)
+  let remaining = input.appliedCents
+  return source
+    .map((line, index) => {
+      const share = Math.round((input.appliedCents * (weights[index] ?? 0)) / weightTotal)
+      const amount = index === source.length - 1 ? remaining : Math.min(remaining, share)
+      remaining -= amount
+      return {
+        personId: line.personId,
+        personName: line.personName,
+        description: line.description.trim(),
+        amountCents: amount,
+      }
+    })
+    .filter((line) => line.amountCents > 0)
 }
 
 export function allocationError(
@@ -160,6 +202,59 @@ export function allocationError(
     return `${formatMoney(paymentCents - applied)} of this payment is not on an invoice. Apply the full amount, or remove an invoice and record the receipt on its own.`
   }
   return null
+}
+
+type AppliedRow = {
+  student: string
+  particulars: string
+  invoiceNumber: string | null
+  amountCents: number
+  personId: string | null
+}
+
+function appliedRows(input: {
+  covers: ReceiptCover[]
+  description: string
+  invoiceNumber: string | null
+  clientName: string
+  subjectName: string | null
+  amountCents: number
+}): AppliedRow[] {
+  if (!input.covers.length) {
+    if (!input.invoiceNumber) return []
+    return [
+      {
+        student: input.subjectName && input.subjectName !== input.clientName ? input.subjectName : input.clientName,
+        particulars: input.description,
+        invoiceNumber: input.invoiceNumber,
+        amountCents: input.amountCents,
+        personId: null,
+      },
+    ]
+  }
+  const rows: AppliedRow[] = []
+  for (const cover of input.covers) {
+    if (cover.lines?.length) {
+      for (const line of cover.lines) {
+        rows.push({
+          student: line.personName,
+          particulars: line.description,
+          invoiceNumber: cover.invoiceNumber,
+          amountCents: line.amountCents,
+          personId: line.personId,
+        })
+      }
+    } else {
+      rows.push({
+        student: cover.personName,
+        particulars: input.description,
+        invoiceNumber: cover.invoiceNumber,
+        amountCents: cover.amountCents,
+        personId: cover.personId,
+      })
+    }
+  }
+  return rows
 }
 
 export function buildReceiptHtml(input: {
@@ -188,18 +283,27 @@ export function buildReceiptHtml(input: {
   const account = input.accountNumber
     ? `${escapeHtml(input.accountNumber)}${input.accountName ? ` · ${escapeHtml(input.accountName)}` : ''}`
     : escapeHtml(GLOBECON_MPESA.account)
-  const covers = input.covers ?? []
-  const coverRows = covers
-    .map(
-      (cover) =>
-        `<tr><td>${escapeHtml(cover.personName)}</td><td>${escapeHtml(cover.invoiceNumber ?? 'Invoice')}</td><td class="num">${formatMoney(cover.amountCents)}</td></tr>`,
-    )
-    .join('')
-  const coverBlock = covers.length
-    ? `<tr><th>Applied to</th><td><table class="covers"><thead><tr><th>For</th><th>Invoice</th><th></th></tr></thead><tbody>${coverRows}</tbody></table></td></tr>`
-    : input.invoiceNumber
-      ? `<tr><th>Invoice</th><td>${escapeHtml(input.invoiceNumber)}</td></tr>`
-      : ''
+  const applied = appliedRows({
+    covers: input.covers ?? [],
+    description: input.description,
+    invoiceNumber: input.invoiceNumber,
+    clientName: input.clientName,
+    subjectName: input.subjectName,
+    amountCents: input.amountCents,
+  })
+  const appliedTable = applied.length
+    ? `<h2>Payment applied</h2>
+    <table class="lines">
+      <thead><tr><th>Student</th><th>Particulars</th><th>Invoice</th><th class="num">Amount</th></tr></thead>
+      <tbody>${applied
+        .map(
+          (row) =>
+            `<tr><td class="student">${escapeHtml(row.student)}</td><td>${escapeHtml(row.particulars)}</td><td>${escapeHtml(row.invoiceNumber ?? '—')}</td><td class="num">${formatMoney(row.amountCents)}</td></tr>`,
+        )
+        .join('')}</tbody>
+      <tfoot><tr><td colspan="3">Amount received</td><td class="num">${formatMoney(applied.reduce((sum, row) => sum + row.amountCents, 0))}</td></tr></tfoot>
+    </table>`
+    : ''
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -236,10 +340,13 @@ export function buildReceiptHtml(input: {
     .facts { width: 100%; border-collapse: collapse; margin-top: 8px; }
     .facts th { text-align: left; width: 34%; padding: 8px 6px; color: #5c6b82; font-weight: 650; font-size: 10pt; border-bottom: 1px solid #d5deea; }
     .facts td { padding: 8px 6px; border-bottom: 1px solid #d5deea; }
-    .covers { width: 100%; border-collapse: collapse; margin-top: 4px; }
-    .covers th { text-align: left; font-size: 9pt; color: #5c6b82; font-weight: 650; padding: 4px 0; border-bottom: 1px solid #d5deea; }
-    .covers td { padding: 5px 8px 5px 0; border-bottom: 1px solid #e6edf5; }
-    .covers td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    h2 { margin: 16px 0 0; font-size: 12pt; color: #1a2f6b; }
+    .lines { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    .lines th { text-align: left; font-size: 8.5pt; letter-spacing: .06em; text-transform: uppercase; color: #5c6b82; background: #f4f7fb; border-bottom: 2px solid #1a2f6b; padding: 7px 6px; }
+    .lines td { border-bottom: 1px solid #d5deea; padding: 7px 6px; vertical-align: top; }
+    .lines td.num, .lines th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .lines td.student { font-weight: 700; color: #1a2f6b; }
+    .lines tfoot td { border-bottom: 0; border-top: 2px solid #1a2f6b; font-weight: 700; color: #1a2f6b; padding-top: 8px; }
     .thanks { margin-top: 22px; font-size: 12pt; color: #1a2f6b; }
     .who { margin-top: 14px; font-size: 10pt; color: #243044; }
     .who p { margin: 1px 0; }
@@ -269,8 +376,8 @@ export function buildReceiptHtml(input: {
       <tr><th>Being payment for</th><td>${escapeHtml(input.description)}</td></tr>
       <tr><th>M-PESA reference</th><td>${escapeHtml(input.mpesaRef)}</td></tr>
       <tr><th>Paid to account</th><td>${account}</td></tr>
-      ${coverBlock}
     </table>
+    ${appliedTable}
     ${input.shareNote ? `<p class="who">${escapeHtml(input.shareNote)}</p>` : ''}
     <p class="thanks">Payment received with thanks.</p>
     <div class="who">
@@ -331,23 +438,51 @@ export function receiptFiles(input: {
       subjectName: null,
       amountCents: input.amountCents,
       invoiceNumber: input.covers.length === 1 ? input.covers[0]?.invoiceNumber ?? null : null,
-      covers: input.covers.length > 1 ? input.covers : input.covers.length === 1 ? input.covers : [],
+      covers: input.covers,
     }),
   }
-  const groups = new Map<string, ReceiptCover[]>()
-  for (const cover of input.covers) {
-    const key = cover.personId ?? `name:${cover.personName}`
+  const rows = appliedRows({
+    covers: input.covers,
+    description: input.description,
+    invoiceNumber: null,
+    clientName: input.clientName,
+    subjectName: null,
+    amountCents: input.amountCents,
+  })
+  const groups = new Map<string, AppliedRow[]>()
+  for (const row of rows) {
+    const key = row.personId ?? `name:${row.student}`
     const list = groups.get(key) ?? []
-    list.push(cover)
+    list.push(row)
     groups.set(key, list)
   }
-  const people = [...groups.entries()].map(([, covers], index) => {
-    const personName = covers[0]?.personName ?? 'Client'
-    const amountCents = covers.reduce((sum, cover) => sum + cover.amountCents, 0)
+  const people = [...groups.entries()].map(([, personRows], index) => {
+    const personName = personRows[0]?.student ?? 'Client'
+    const personId = personRows[0]?.personId ?? null
+    const amountCents = personRows.reduce((sum, row) => sum + row.amountCents, 0)
+    const byInvoice = new Map<string, ReceiptCover>()
+    for (const row of personRows) {
+      const key = row.invoiceNumber ?? ''
+      const cover = byInvoice.get(key) ?? {
+        personId,
+        personName,
+        invoiceNumber: row.invoiceNumber,
+        amountCents: 0,
+        lines: [],
+      }
+      cover.lines?.push({
+        personId,
+        personName,
+        description: row.particulars,
+        amountCents: row.amountCents,
+      })
+      cover.amountCents += row.amountCents
+      byInvoice.set(key, cover)
+    }
     const number = groups.size > 1 ? `${input.documentNumber}-${index + 1}` : input.documentNumber
     return {
       label: personName,
-      personId: covers[0]?.personId ?? null,
+      personId,
       filename: `${fileSlug(number)}-${fileSlug(personName)}.html`,
       html: buildReceiptHtml({
         ...shared,
@@ -357,7 +492,7 @@ export function receiptFiles(input: {
         subjectName: null,
         amountCents,
         invoiceNumber: null,
-        covers,
+        covers: [...byInvoice.values()],
         shareNote:
           groups.size > 1
             ? `This receipt is ${personName}'s share of ${input.documentNumber}. The payment received was ${formatMoney(input.amountCents)} from ${input.payerName}, reference ${input.mpesaRef}.`

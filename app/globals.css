@@ -2698,7 +2698,15 @@ html:has(.auth-shell) body { background: #020617; }
 .clients-invoices-new { flex-shrink: 0; }
 .clients-invoices .form-error, .clients-invoices .form-success { margin: 0; }
 .clients-invoice-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-.clients-invoice-list li { display: flex; gap: 8px; align-items: stretch; }
+.clients-invoice-list > li { display: flex; gap: 8px; align-items: stretch; }
+.client-receipt-lines { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; white-space: normal; }
+.client-receipt-lines li {
+  display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 2fr) auto; gap: 8px; align-items: baseline;
+  font-size: 11px; padding: 0; border: 0; background: transparent;
+}
+.client-receipt-lines strong { font-size: 12px; }
+.client-receipt-lines span { color: var(--muted-foreground); }
+.client-receipt-lines em { font-style: normal; font-weight: 700; font-variant-numeric: tabular-nums; }
 .clients-invoice-open {
   flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px;
   border: 1px solid var(--border); background: var(--card); text-align: left; cursor: pointer; color: inherit;
@@ -2739,7 +2747,9 @@ html:has(.auth-shell) body { background: #020617; }
 @media (max-width: 640px) {
   .clients-quick-row { grid-template-columns: 1fr; }
   .clients-family-tags { justify-content: flex-start; }
-  .clients-invoice-list li { flex-direction: column; }
+  .clients-invoice-list > li { flex-direction: column; }
+  .client-receipt-lines li { grid-template-columns: 1fr auto; }
+  .client-receipt-lines span { grid-column: 1 / -1; }
   .clients-invoice-actions button { width: auto; height: 36px; flex: 1; }
 }
 

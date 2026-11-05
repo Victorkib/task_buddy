@@ -6,10 +6,38 @@ import { clientReceiptFile, deleteClientReceipt, saveClientReceipt } from '@/app
 import { Button } from '@/components/ui/button'
 import { useConfirm } from '@/components/confirm-dialog'
 import { downloadHtml, openPrintWindow, wait, writeAndPrint } from '@/lib/admin-office/invoice-download'
-import { formatMoney, invoiceTotals } from '@/lib/admin-office/invoices'
+import { formatMoney, invoiceTotals, lineAmountCents } from '@/lib/admin-office/invoices'
 import { globeconDate } from '@/lib/admin-office/letters'
-import { formatMpesaPhone, parseMpesaConfirmation, type MpesaPayment } from '@/lib/admin-office/receipts'
+import { formatMpesaPhone, parseMpesaConfirmation, settlementLines, type MpesaPayment } from '@/lib/admin-office/receipts'
 import type { ClientBilling, ClientInvoiceView, ClientReceiptView, ClientRecord } from '@/lib/clients/types'
+
+function receiptCharges(receipt: ClientReceiptView, billing: ClientBilling, clientsById: Map<string, ClientRecord>) {
+  return receipt.allocations.flatMap((allocation) => {
+    const invoice = billing.invoices.find((item) => item.id === allocation.invoiceId)
+    if (!invoice || invoice.lines.length === 0) {
+      return [
+        {
+          personId: allocation.subjectClientId,
+          personName: allocation.personName,
+          description: allocation.description,
+          amountCents: allocation.amountCents,
+          invoiceNumber: allocation.invoiceNumber,
+        },
+      ]
+    }
+    const totals = invoiceTotals(invoice.lines, invoice.vatEnabled, invoice.vatRateBps)
+    return settlementLines({
+      appliedCents: allocation.amountCents,
+      vatCents: totals.vatCents,
+      lines: invoice.lines.map((line) => ({
+        personId: line.subjectClientId ?? invoice.clientId,
+        personName: (line.subjectClientId ? clientsById.get(line.subjectClientId)?.name : null) ?? invoice.clientName,
+        description: line.description,
+        amountCents: lineAmountCents(line.quantityHundredths, line.rateCents),
+      })),
+    }).map((line) => ({ ...line, invoiceNumber: allocation.invoiceNumber }))
+  })
+}
 
 function errorOf(result: unknown) {
   if (result && typeof result === 'object' && 'error' in result && typeof (result as { error?: unknown }).error === 'string') {
@@ -458,6 +486,7 @@ export function ClientReceiptsSection({
             <ReceiptRow
               key={receipt.id}
               receipt={receipt}
+              charges={receiptCharges(receipt, billing, clientsById)}
               pending={pending}
               canDelete={billing.canIssue}
               onDownload={download}
@@ -474,6 +503,7 @@ export function ClientReceiptsSection({
 
 function ReceiptRow({
   receipt,
+  charges,
   pending,
   canDelete,
   onDownload,
@@ -481,13 +511,14 @@ function ReceiptRow({
   onDelete,
 }: {
   receipt: ClientReceiptView
+  charges: { personId: string | null; personName: string; description: string; amountCents: number; invoiceNumber: string | null }[]
   pending: boolean
   canDelete: boolean
   onDownload: (id: string, part?: string) => void
   onPrint: (id: string, part?: string) => void
   onDelete: (receipt: ClientReceiptView) => void
 }) {
-  const people = [...new Map(receipt.allocations.map((allocation) => [allocation.subjectClientId ?? `name:${allocation.personName}`, allocation])).values()]
+  const people = [...new Map(charges.map((charge) => [charge.personId ?? `name:${charge.personName}`, charge])).values()]
   return (
     <li>
       <div className="clients-invoice-open is-static">
@@ -497,8 +528,21 @@ function ReceiptRow({
           <small>
             {globeconDate(receipt.paidOn)}
             {receipt.paidAtLabel ? ` · ${receipt.paidAtLabel}` : ''} · {receipt.payerName} · {receipt.mpesaRef}
-            {people.length ? ` · ${people.map((person) => person.personName).join(', ')}` : ''}
           </small>
+          {charges.length ? (
+            <ul className="client-receipt-lines">
+              {charges.map((charge, index) => (
+                <li key={`${charge.personId ?? charge.personName}-${charge.invoiceNumber ?? 'invoice'}-${index}`}>
+                  <strong>{charge.personName}</strong>
+                  <span>
+                    {charge.description}
+                    {charge.invoiceNumber ? ` · ${charge.invoiceNumber}` : ''}
+                  </span>
+                  <em>{formatMoney(charge.amountCents)}</em>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </span>
         <em>{formatMoney(receipt.amountCents)}</em>
       </div>
@@ -516,7 +560,7 @@ function ReceiptRow({
         ) : null}
         {people.length > 1
           ? people.map((person) => (
-              <button key={person.subjectClientId ?? person.personName} type="button" disabled={pending || !person.subjectClientId} onClick={() => person.subjectClientId && onDownload(receipt.id, person.subjectClientId)}>
+              <button key={person.personId ?? person.personName} type="button" disabled={pending || !person.personId} onClick={() => person.personId && onDownload(receipt.id, person.personId)}>
                 <Download aria-hidden="true" /> {person.personName}
               </button>
             ))

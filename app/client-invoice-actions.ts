@@ -3,10 +3,10 @@
 import { and, eq, inArray, or, sql } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 import { parseInvoiceLineRows, invoiceFile, type ParsedInvoiceLine } from '@/lib/admin-office/invoice-records'
-import { amountWithinLimit, invoiceTotals, parseVatRate, type PaymentKind } from '@/lib/admin-office/invoices'
+import { amountWithinLimit, invoiceTotals, lineAmountCents, parseVatRate, type PaymentKind } from '@/lib/admin-office/invoices'
 import { embeddedLetterheadSrc } from '@/lib/admin-office/letterhead-embed'
 import { isIsoDate, nairobiToday } from '@/lib/admin-office/leave'
-import { allocationError, receiptFiles, type ReceiptCover } from '@/lib/admin-office/receipts'
+import { allocationError, receiptFiles, settlementLines, type ReceiptCover } from '@/lib/admin-office/receipts'
 import { hasFullClientAccess } from '@/lib/auth/permissions'
 import { getDb } from '@/lib/db'
 import { invoiceInvolves, loadClientScope } from '@/lib/db/clients'
@@ -29,6 +29,45 @@ function emailOrEmpty(value: string) {
   if (!value) return null
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) || value.length > 200) return undefined
   return value
+}
+
+function coverFromInvoice(
+  invoice: {
+    documentNumber: string | null
+    clientId: string | null
+    clientName: string
+    vatEnabled: boolean
+    vatRateBps: number
+    lines: { subjectClientId: string | null; description: string; quantityHundredths: number; rateCents: number }[]
+  },
+  appliedCents: number,
+  nameOf: Map<string, string>,
+): ReceiptCover {
+  const totals = invoiceTotals(invoice.lines, invoice.vatEnabled, invoice.vatRateBps)
+  const subjects = [...new Set(invoice.lines.map((line) => line.subjectClientId).filter((id): id is string => Boolean(id)))]
+  const personId = subjects.length === 1 ? (subjects[0] ?? null) : invoice.clientId
+  const personName =
+    subjects.length === 1
+      ? (nameOf.get(subjects[0] ?? '') ?? invoice.clientName)
+      : subjects.length > 1
+        ? subjects.map((id) => nameOf.get(id) ?? 'Student').join(' & ')
+        : invoice.clientName
+  return {
+    personId,
+    personName,
+    invoiceNumber: invoice.documentNumber,
+    amountCents: appliedCents,
+    lines: settlementLines({
+      appliedCents,
+      vatCents: totals.vatCents,
+      lines: invoice.lines.map((line) => ({
+        personId: line.subjectClientId ?? invoice.clientId,
+        personName: line.subjectClientId ? (nameOf.get(line.subjectClientId) ?? invoice.clientName) : invoice.clientName,
+        description: line.description,
+        amountCents: lineAmountCents(line.quantityHundredths, line.rateCents),
+      })),
+    }),
+  }
 }
 
 /** Full client access issues invoices. Create access is enough to prepare drafts. */
@@ -532,12 +571,7 @@ export async function saveClientReceipt(payload: unknown) {
   if (!documentNumber) return { error: 'Those invoices changed while this receipt was saving. Check the amounts and try again.' as const }
 
   const client = await db.query.officeClients.findFirst({ where: eq(officeClients.id, clientId), columns: { name: true, email: true } })
-  const covers: ReceiptCover[] = prepared.map((row) => ({
-    personId: row.personId,
-    personName: row.personName,
-    invoiceNumber: row.invoice.documentNumber,
-    amountCents: row.amount,
-  }))
+  const covers: ReceiptCover[] = prepared.map((row) => coverFromInvoice(row.invoice, row.amount, nameOf))
   const files = receiptFiles({
     letterhead: embeddedLetterheadSrc(),
     documentNumber,
@@ -575,12 +609,30 @@ async function loadReceiptFiles(id: string, companyId: string) {
   const [row] = await db.select().from(officeReceipts).where(eq(officeReceipts.id, id))
   if (!row || row.companyId !== companyId) return null
   const allocations = await db.select().from(officeReceiptAllocations).where(eq(officeReceiptAllocations.receiptId, id))
-  const covers: ReceiptCover[] = allocations.map((allocation) => ({
-    personId: allocation.subjectClientId,
-    personName: allocation.personName,
-    invoiceNumber: allocation.invoiceNumber,
-    amountCents: allocation.amountCents,
-  }))
+  const allocatedIds = [...new Set(allocations.map((allocation) => allocation.invoiceId))]
+  const allocatedInvoices = allocatedIds.length
+    ? await db.query.officeInvoices.findMany({ where: inArray(officeInvoices.id, allocatedIds), with: { lines: true } })
+    : []
+  const subjectIds = [
+    ...new Set(allocatedInvoices.flatMap((invoice) => invoice.lines.map((line) => line.subjectClientId).filter((subjectId): subjectId is string => Boolean(subjectId)))),
+  ]
+  const named = subjectIds.length
+    ? await db.select({ id: officeClients.id, name: officeClients.name }).from(officeClients).where(inArray(officeClients.id, subjectIds))
+    : []
+  const nameOf = new Map(named.map((person) => [person.id, person.name]))
+  const invoiceById = new Map(allocatedInvoices.map((invoice) => [invoice.id, invoice]))
+  const covers: ReceiptCover[] = allocations.map((allocation) => {
+    const invoice = invoiceById.get(allocation.invoiceId)
+    if (!invoice) {
+      return {
+        personId: allocation.subjectClientId,
+        personName: allocation.personName,
+        invoiceNumber: allocation.invoiceNumber,
+        amountCents: allocation.amountCents,
+      }
+    }
+    return coverFromInvoice(invoice, allocation.amountCents, nameOf)
+  })
   if (!covers.length && row.invoiceId) {
     const invoice = await db.query.officeInvoices.findFirst({ where: eq(officeInvoices.id, row.invoiceId), columns: { documentNumber: true, clientName: true, clientId: true } })
     if (invoice) {
@@ -597,7 +649,7 @@ async function loadReceiptFiles(id: string, companyId: string) {
     : null
   return {
     row,
-    subjects: covers.map((cover) => cover.personId),
+    subjects: covers.flatMap((cover) => [cover.personId, ...(cover.lines ?? []).map((line) => line.personId)]),
     files: receiptFiles({
       letterhead: embeddedLetterheadSrc(),
       documentNumber: row.documentNumber ?? 'Receipt',
