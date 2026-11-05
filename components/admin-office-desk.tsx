@@ -144,6 +144,8 @@ export function AdminOfficeDesk({
         setNotice((result && 'notice' in result && result.notice) || fallback)
         onSuccess?.(result && typeof result === 'object' ? result : undefined)
         router.refresh()
+      } catch {
+        setError('That did not go through. Try again.')
       } finally {
         setBusyLabel(null)
       }

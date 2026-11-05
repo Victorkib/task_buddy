@@ -14,6 +14,7 @@ import {
   savePaymentAccount,
   setInvoiceStatus,
 } from '@/app/admin-office-actions'
+import { confirmLayerOpen, useConfirm } from '@/components/confirm-dialog'
 import { centsToAmount, parseAmountText } from '@/lib/admin-office/expenses'
 import { downloadBytes, printHtml } from '@/lib/admin-office/invoice-download'
 import {
@@ -149,6 +150,7 @@ export function OfficeDrawer({
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
+        if (confirmLayerOpen()) return
         event.stopPropagation()
         onClose()
       }
@@ -192,15 +194,43 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
   const [clientForm, setClientForm] = useState(blankClient)
   const [paymentForm, setPaymentForm] = useState(blankPayment)
   const [billingHint, setBillingHint] = useState<string | null>(null)
+  const [statusNote, setStatusNote] = useState<{ kind: 'error' | 'ok'; text: string } | null>(null)
+  const statusNoteRef = useRef<HTMLParagraphElement>(null)
+  const { ask, dialog } = useConfirm()
   const saved = desk.invoices.find((invoice) => invoice.id === form.id) ?? null
+
+  useEffect(() => {
+    if (!statusNote) return
+    statusNoteRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [statusNote])
 
   function openInvoice(next: InvoiceForm) {
     setForm(next)
     setDrawer('invoice')
+    setStatusNote(null)
   }
 
   function closeDrawer() {
     setDrawer(null)
+    setStatusNote(null)
+  }
+
+  function runStatus(next: 'draft' | 'sent' | 'paid' | 'void', fallback: string) {
+    if (!saved) return
+    const invoiceId = saved.id
+    setStatusNote(null)
+    run(async () => {
+      try {
+        const result = await setInvoiceStatus(invoiceId, next)
+        if (result && 'error' in result && result.error) setStatusNote({ kind: 'error', text: result.error })
+        else setStatusNote({ kind: 'ok', text: (result && 'notice' in result && result.notice) || fallback })
+        return result
+      } catch {
+        const text = 'That did not go through. Try again.'
+        setStatusNote({ kind: 'error', text })
+        return { error: text }
+      }
+    }, fallback)
   }
 
   const totals = useMemo(() => {
@@ -689,10 +719,18 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
                     disabled={pending}
                     onClick={() => {
                       const label = saved.documentNumber ?? 'this invoice'
-                      if (!window.confirm(saved.status === 'draft' ? `Delete ${label}?` : `Delete ${label}? This removes it from the record.`)) return
-                      run(() => deleteInvoice(saved.id), saved.status === 'draft' ? 'Draft deleted.' : 'Invoice deleted.', () => {
-                        setForm(blankInvoice(desk))
-                        closeDrawer()
+                      const isDraft = saved.status === 'draft'
+                      ask({
+                        title: `Delete ${label}?`,
+                        description: isDraft ? 'This draft is removed from the record.' : 'This removes it from the record.',
+                        confirmLabel: 'Delete invoice',
+                        layer: 'drawer',
+                        onConfirm: () => {
+                          run(() => deleteInvoice(saved.id), isDraft ? 'Draft deleted.' : 'Invoice deleted.', () => {
+                            setForm(blankInvoice(desk))
+                            closeDrawer()
+                          })
+                        },
                       })
                     }}
                   >
@@ -720,27 +758,32 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
                   </Button>
                   {saved.status !== 'void' ? (
                     <>
-                      <Button type="button" variant="outline" disabled={pending} onClick={() => run(() => setInvoiceStatus(saved.id, 'sent'), 'Marked as sent.')}>
+                      <Button type="button" variant="outline" disabled={pending} onClick={() => runStatus('sent', 'Marked as sent.')}>
                         Mark as sent
                       </Button>
-                      <Button type="button" variant="outline" disabled={pending} onClick={() => run(() => setInvoiceStatus(saved.id, 'paid'), 'Marked as paid.')}>
+                      <Button type="button" variant="outline" disabled={pending} onClick={() => runStatus('paid', 'Marked as paid.')}>
                         Mark as paid
                       </Button>
-                      <Button type="button" variant="outline" disabled={pending} onClick={() => run(() => setInvoiceStatus(saved.id, 'void'), 'Invoice voided.')}>
+                      <Button type="button" variant="outline" disabled={pending} onClick={() => runStatus('void', 'Invoice voided.')}>
                         Void
                       </Button>
                       {saved.status === 'sent' || saved.status === 'paid' ? (
-                        <Button type="button" variant="outline" disabled={pending} onClick={() => run(() => setInvoiceStatus(saved.id, 'draft'), 'Marked as a draft.')}>
+                        <Button type="button" variant="outline" disabled={pending} onClick={() => runStatus('draft', 'Marked as a draft.')}>
                           Return to draft
                         </Button>
                       ) : null}
                     </>
                   ) : (
-                    <Button type="button" variant="outline" disabled={pending} onClick={() => run(() => setInvoiceStatus(saved.id, 'draft'), 'Marked as a draft.')}>
+                    <Button type="button" variant="outline" disabled={pending} onClick={() => runStatus('draft', 'Marked as a draft.')}>
                       Restore as draft
                     </Button>
                   )}
                 </div>
+                {statusNote ? (
+                  <p ref={statusNoteRef} className={statusNote.kind === 'error' ? 'form-error' : 'form-success'} role="status">
+                    {statusNote.text}
+                  </p>
+                ) : null}
                 {saved.status !== 'void' ? (
                   <div className="invoice-mail-grid">
                     <div className="invoice-mail">
@@ -790,6 +833,7 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
           <PaymentsView desk={desk} pending={pending} form={paymentForm} setForm={setPaymentForm} run={run} />
         </OfficeDrawer>
       ) : null}
+      {dialog}
     </div>
   )
 }
@@ -807,6 +851,8 @@ function PaymentsView({
   setForm: (value: { id: string; label: string; kind: 'bank' | 'paybill' | 'other'; details: string; active: boolean }) => void
   run: Run
 }) {
+  const { ask, dialog } = useConfirm()
+
   function submitSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const data = new FormData(event.currentTarget)
@@ -909,8 +955,13 @@ function PaymentsView({
                 variant="outline"
                 disabled={pending}
                 onClick={() => {
-                  if (!window.confirm('Remove these payment details? Invoices already saved keep the wording they have.')) return
-                  run(() => deletePaymentAccount(account.id), 'Payment details removed.')
+                  ask({
+                    title: 'Remove these payment details?',
+                    description: 'Invoices already saved keep the wording they have.',
+                    confirmLabel: 'Remove details',
+                    layer: 'drawer',
+                    onConfirm: () => run(() => deletePaymentAccount(account.id), 'Payment details removed.'),
+                  })
                 }}
               >
                 Remove
@@ -919,6 +970,7 @@ function PaymentsView({
           ))}
         </ul>
       </form>
+      {dialog}
     </div>
   )
 }
@@ -940,6 +992,8 @@ function ClientsView({
   setForm: (value: { id: string; name: string; email: string; phone: string; address: string; pin: string }) => void
   run: Run
 }) {
+  const { ask, dialog } = useConfirm()
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const data = new FormData()
@@ -1014,9 +1068,16 @@ function ClientsView({
                 variant="outline"
                 disabled={pending}
                 onClick={() => {
-                  if (!window.confirm('Remove this client? Invoices already written keep the name that was on them.')) return
-                  run(() => deleteClient(client.id), 'Client removed.', () => {
-                    if (form.id === client.id) setForm(blankClient())
+                  ask({
+                    title: 'Remove this client?',
+                    description: 'Invoices already written keep the name that was on them.',
+                    confirmLabel: 'Remove client',
+                    layer: 'drawer',
+                    onConfirm: () => {
+                      run(() => deleteClient(client.id), 'Client removed.', () => {
+                        if (form.id === client.id) setForm(blankClient())
+                      })
+                    },
                   })
                 }}
               >
@@ -1026,6 +1087,7 @@ function ClientsView({
           ))}
         </ul>
       </div>
+      {dialog}
     </div>
   )
 }

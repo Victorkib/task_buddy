@@ -975,6 +975,7 @@ html:has(.auth-shell) body { background: #020617; }
 .row-action:disabled { opacity: .5; cursor: not-allowed; }
 .empty-state-compact { padding: 12px 10px; font-size: 11px; }
 .confirm-backdrop { z-index: var(--z-confirm); }
+.confirm-backdrop[data-layer='drawer'] { z-index: calc(var(--z-drawer) + 12); }
 .confirm-modal { width: min(100%, 440px); }
 .confirm-copy { margin: 0 0 16px; color: var(--muted-foreground); font-size: 13px; line-height: 1.45; }
 .confirm-field { display: flex; flex-direction: column; gap: 6px; font-size: 11px; font-weight: 700; margin-bottom: 8px; }
@@ -1580,6 +1581,16 @@ html:has(.auth-shell) body { background: #020617; }
   }
   .remove-workload ul { grid-template-columns: 1fr; }
   .dept-stats { grid-template-columns: repeat(2, 1fr); }
+  .confirm-backdrop {
+    padding: 16px;
+    align-items: center;
+    place-items: center;
+  }
+  .confirm-backdrop .confirm-modal {
+    width: min(100%, 440px);
+    max-height: min(92dvh, 640px);
+    border-radius: 10px;
+  }
 }
 
 @media (max-width: 900px) {

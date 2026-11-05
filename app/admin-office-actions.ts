@@ -30,6 +30,7 @@ import {
   type PaymentKind,
 } from '@/lib/admin-office/invoices'
 import { buildOfferLetter, buildStaffLetter } from '@/lib/admin-office/letters'
+import { invoiceDraftRefusal } from '@/lib/admin-office/invoice-status'
 import { invoiceFile, parseInvoiceLineRows } from '@/lib/admin-office/invoice-records'
 import { embeddedLetterheadSrc } from '@/lib/admin-office/letterhead-embed'
 import {
@@ -1605,11 +1606,36 @@ export async function setInvoiceStatus(id: string, status: string) {
   const loaded = await issueInvoiceGate(id)
   if ('error' in loaded) return loaded
   if (!INVOICE_STATUSES.has(status)) return { error: 'Choose draft, sent, paid, or void.' }
-  if (status === 'draft' && loaded.invoice.status === 'paid') {
-    const linked = await receiptNumbersOnInvoice(id)
-    if (linked.length) return { error: `Delete ${linked.join(', ')} first. This invoice is paid by that receipt.` }
+  // One statement: a paid invoice with a receipt applied cannot become draft.
+  // Sent and void invoices can. Neon HTTP has no interactive transaction.
+  const updated = await getDb()
+    .update(officeInvoices)
+    .set({ status, updatedAt: new Date() })
+    .where(
+      and(
+        eq(officeInvoices.id, id),
+        eq(officeInvoices.companyId, loaded.currentUser.companyId),
+        status === 'draft'
+          ? sql`(${officeInvoices.status} <> 'paid' OR (
+              NOT EXISTS (SELECT 1 FROM office_receipt_allocations WHERE invoice_id = ${officeInvoices.id})
+              AND NOT EXISTS (SELECT 1 FROM office_receipts WHERE invoice_id = ${officeInvoices.id})
+            ))`
+          : undefined,
+      ),
+    )
+    .returning({ id: officeInvoices.id })
+  if (!updated.length) {
+    const current = await getDb().query.officeInvoices.findFirst({
+      where: and(eq(officeInvoices.id, id), eq(officeInvoices.companyId, loaded.currentUser.companyId)),
+      columns: { status: true },
+    })
+    if (!current) return { error: 'That invoice is no longer there.' }
+    if (status === 'draft') {
+      const blocked = invoiceDraftRefusal(current.status, await receiptNumbersOnInvoice(id))
+      if (blocked) return { error: blocked }
+    }
+    return { error: 'That invoice could not be updated. Refresh and try again.' }
   }
-  await getDb().update(officeInvoices).set({ status, updatedAt: new Date() }).where(eq(officeInvoices.id, id))
   refresh()
   const labels: Record<string, string> = { draft: 'Marked as a draft.', sent: 'Marked as sent.', paid: 'Marked as paid.', void: 'Invoice voided.' }
   return { ok: true as const, notice: labels[status] ?? 'Invoice updated.' }

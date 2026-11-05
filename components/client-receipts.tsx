@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition, type FormEvent } from 'react'
 import { Download, Printer, Receipt, Trash2 } from 'lucide-react'
 import { clientReceiptFile, deleteClientReceipt, saveClientReceipt } from '@/app/client-invoice-actions'
 import { Button } from '@/components/ui/button'
+import { useConfirm } from '@/components/confirm-dialog'
 import { downloadHtml, openPrintWindow, wait, writeAndPrint } from '@/lib/admin-office/invoice-download'
 import { formatMoney, invoiceTotals } from '@/lib/admin-office/invoices'
 import { globeconDate } from '@/lib/admin-office/letters'
@@ -75,6 +76,7 @@ export function ClientReceiptsSection({
   onRefresh?: () => void
 }) {
   const [open, setOpen] = useState(false)
+  const { ask, dialog } = useConfirm()
   const [seen, setSeen] = useState(composeToken)
   const [message, setMessage] = useState('')
   const [payment, setPayment] = useState<MpesaPayment>(blankPayment())
@@ -217,17 +219,23 @@ export function ClientReceiptsSection({
 
   function remove(receipt: ClientReceiptView) {
     const label = receipt.documentNumber ?? 'this receipt'
-    if (!window.confirm(`Delete ${label}? Invoices that this payment had fully covered go back to sent.`)) return
-    setError(null)
-    startTransition(async () => {
-      const result = await deleteClientReceipt(receipt.id)
-      const problem = errorOf(result)
-      if (problem) {
-        setError(problem)
-        return
-      }
-      setNotice(noticeOf(result) ?? 'Receipt deleted.')
-      onRefresh?.()
+    ask({
+      title: `Delete ${label}?`,
+      description: 'Invoices that this payment had fully covered go back to sent.',
+      confirmLabel: 'Delete receipt',
+      onConfirm: () => {
+        setError(null)
+        startTransition(async () => {
+          const result = await deleteClientReceipt(receipt.id)
+          const problem = errorOf(result)
+          if (problem) {
+            setError(problem)
+            return
+          }
+          setNotice(noticeOf(result) ?? 'Receipt deleted.')
+          onRefresh?.()
+        })
+      },
     })
   }
 
@@ -459,6 +467,7 @@ export function ClientReceiptsSection({
           ))}
         </ul>
       ) : null}
+      {dialog}
     </section>
   )
 }

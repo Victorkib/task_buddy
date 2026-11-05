@@ -14,6 +14,7 @@ import {
 import { ClientFamilyPanel, type QuickAddInput } from '@/components/client-family'
 import { ClientInvoicesSection } from '@/components/client-invoices'
 import { ClientReceiptsSection } from '@/components/client-receipts'
+import { useConfirm } from '@/components/confirm-dialog'
 import { Button } from '@/components/ui/button'
 import { UserAvatar } from '@/components/user-avatar'
 import {
@@ -203,6 +204,7 @@ export function ClientManagement({
   const [programmeChoice, setProgrammeChoice] = useState('')
   const [customProgrammeName, setCustomProgrammeName] = useState('')
   const [programmeBusy, setProgrammeBusy] = useState(false)
+  const { ask, dialog } = useConfirm()
   const caps = desk.capabilities
   const canMutate = draft.id ? caps.canUpdate : caps.canCreate
   const showDirectory = caps.fullDirectory || desk.canManageBilling
@@ -253,9 +255,17 @@ export function ClientManagement({
     })
   }, [allClients, desk.capabilities.fullDirectory, focus, query, statusFilter])
 
-  function confirmLeave() {
-    if (JSON.stringify(draft) === savedSnapshot) return true
-    return window.confirm('You have unsaved changes on this record. Leave without saving them?')
+  function guardLeave(run: () => void) {
+    if (JSON.stringify(draft) === savedSnapshot) {
+      run()
+      return
+    }
+    ask({
+      title: 'Leave this record?',
+      description: 'You have unsaved changes on this record. Leave without saving them?',
+      confirmLabel: 'Leave without saving',
+      onConfirm: run,
+    })
   }
 
   function selectClient(client: ClientRecord) {
@@ -274,20 +284,21 @@ export function ClientManagement({
   }
 
   function startCreate(kind: ClientKind) {
-    if (!confirmLeave()) return
-    const next = blankDraft(kind)
-    setSelectedId(null)
-    setDraft(next)
-    setSavedSnapshot(JSON.stringify(next))
-    setProgrammeChoice('')
-    setCustomProgrammeName('')
-    setEditing(false)
-    setComposing(true)
-    setError(null)
-    setNotice(null)
-    if (kind === 'student') setFocus('students')
-    else if (kind === 'guardian') setFocus('guardians')
-    else setFocus('directory')
+    guardLeave(() => {
+      const next = blankDraft(kind)
+      setSelectedId(null)
+      setDraft(next)
+      setSavedSnapshot(JSON.stringify(next))
+      setProgrammeChoice('')
+      setCustomProgrammeName('')
+      setEditing(false)
+      setComposing(true)
+      setError(null)
+      setNotice(null)
+      if (kind === 'student') setFocus('students')
+      else if (kind === 'guardian') setFocus('guardians')
+      else setFocus('directory')
+    })
   }
 
   function onProgrammeSelectChange(value: string) {
@@ -411,24 +422,30 @@ export function ClientManagement({
   }
 
   function runDelete(id: string) {
-    if (!window.confirm('Remove this record from the directory? Past invoices keep their bill-to text.')) return
-    setError(null)
-    startTransition(async () => {
-      const result = await deleteClientRecord(id)
-      if ('error' in result && result.error) {
-        setError(result.error)
-        return
-      }
-      if ('ok' in result && result.ok) {
-        const next = blankDraft()
-        setSelectedId(null)
-        setDraft(next)
-        setSavedSnapshot(JSON.stringify(next))
-        setEditing(false)
-        setComposing(false)
-        setNotice(result.notice)
-        onRefresh?.()
-      }
+    ask({
+      title: 'Remove this record?',
+      description: 'Past invoices keep their bill-to text.',
+      confirmLabel: 'Remove record',
+      onConfirm: () => {
+        setError(null)
+        startTransition(async () => {
+          const result = await deleteClientRecord(id)
+          if ('error' in result && result.error) {
+            setError(result.error)
+            return
+          }
+          if ('ok' in result && result.ok) {
+            const next = blankDraft()
+            setSelectedId(null)
+            setDraft(next)
+            setSavedSnapshot(JSON.stringify(next))
+            setEditing(false)
+            setComposing(false)
+            setNotice(result.notice)
+            onRefresh?.()
+          }
+        })
+      },
     })
   }
 
@@ -561,10 +578,12 @@ export function ClientManagement({
 
   function openFromFamily(id: string) {
     const client = clientsById.get(id)
-    if (!client || !confirmLeave()) return
-    setQuery('')
-    setStatusFilter('all')
-    selectClient(client)
+    if (!client) return
+    guardLeave(() => {
+      setQuery('')
+      setStatusFilter('all')
+      selectClient(client)
+    })
   }
 
   function handleLink(otherId: string, relation: ClientLinkRelation) {
@@ -773,7 +792,8 @@ export function ClientManagement({
                         type="button"
                         className={`clients-card${selectedId === client.id || draft.id === client.id ? ' is-on' : ''}`}
                         onClick={() => {
-                          if (client.id === draft.id || confirmLeave()) selectClient(client)
+                          if (client.id === draft.id) return
+                          guardLeave(() => selectClient(client))
                         }}
                       >
                         <span className={`clients-kind kind-${client.kind}`}>{CLIENT_KIND_LABELS[client.kind]}</span>
@@ -1145,14 +1165,15 @@ export function ClientManagement({
                         variant="outline"
                         disabled={isPending}
                         onClick={() => {
-                          if (!confirmLeave()) return
-                          if (savedRecord) {
-                            const next = fromRecord(savedRecord)
-                            setDraft(next)
-                            setSavedSnapshot(JSON.stringify(next))
-                            setProgrammeChoice(savedRecord.programmeId ?? '')
-                          }
-                          setEditing(false)
+                          guardLeave(() => {
+                            if (savedRecord) {
+                              const next = fromRecord(savedRecord)
+                              setDraft(next)
+                              setSavedSnapshot(JSON.stringify(next))
+                              setProgrammeChoice(savedRecord.programmeId ?? '')
+                            }
+                            setEditing(false)
+                          })
                         }}
                       >
                         Cancel
@@ -1163,12 +1184,13 @@ export function ClientManagement({
                         variant="outline"
                         disabled={isPending}
                         onClick={() => {
-                          if (!confirmLeave()) return
-                          const next = blankDraft(focus === 'students' ? 'student' : focus === 'guardians' ? 'guardian' : 'organization')
-                          setSelectedId(null)
-                          setDraft(next)
-                          setSavedSnapshot(JSON.stringify(next))
-                          setComposing(false)
+                          guardLeave(() => {
+                            const next = blankDraft(focus === 'students' ? 'student' : focus === 'guardians' ? 'guardian' : 'organization')
+                            setSelectedId(null)
+                            setDraft(next)
+                            setSavedSnapshot(JSON.stringify(next))
+                            setComposing(false)
+                          })
                         }}
                       >
                         Clear
@@ -1319,21 +1341,27 @@ export function ClientManagement({
                             variant="outline"
                             disabled={isPending}
                             onClick={() => {
-                              if (!window.confirm('Remove this programme? Students keep their records.')) return
-                              setProgrammes((current) => current.filter((entry) => entry.id !== programme.id))
-                              if (draft.programmeId === programme.id) {
-                                setDraft((current) => ({ ...current, programmeId: '' }))
-                                setProgrammeChoice('')
-                              }
-                              startTransition(async () => {
-                                const result = await deleteAcademyProgramme(programme.id)
-                                if ('error' in result && result.error) {
-                                  setError(result.error)
-                                  onRefresh?.()
-                                } else if ('ok' in result && result.ok) {
-                                  setNotice(result.notice)
-                                  onRefresh?.()
-                                }
+                              ask({
+                                title: 'Remove this programme?',
+                                description: 'Students keep their records.',
+                                confirmLabel: 'Remove programme',
+                                onConfirm: () => {
+                                  setProgrammes((current) => current.filter((entry) => entry.id !== programme.id))
+                                  if (draft.programmeId === programme.id) {
+                                    setDraft((current) => ({ ...current, programmeId: '' }))
+                                    setProgrammeChoice('')
+                                  }
+                                  startTransition(async () => {
+                                    const result = await deleteAcademyProgramme(programme.id)
+                                    if ('error' in result && result.error) {
+                                      setError(result.error)
+                                      onRefresh?.()
+                                    } else if ('ok' in result && result.ok) {
+                                      setNotice(result.notice)
+                                      onRefresh?.()
+                                    }
+                                  })
+                                },
                               })
                             }}
                           >
@@ -1358,6 +1386,7 @@ export function ClientManagement({
           <strong> Admin office → Invoices</strong>.
         </p>
       </aside>
+      {dialog}
     </div>
   )
 }
