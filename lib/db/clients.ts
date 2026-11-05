@@ -17,6 +17,7 @@ import type {
   ClientDesk,
   ClientInvoiceStatus,
   ClientKind,
+  ClientReceiptAllocation,
   ClientReceiptView,
   ClientLinkRelation,
   ClientLinkView,
@@ -32,6 +33,7 @@ import {
   officeInvoiceSettings,
   officeInvoices,
   officePaymentAccounts,
+  officeReceiptAllocations,
   officeReceipts,
 } from '@/lib/db/schema'
 import { isMailConfigured } from '@/lib/mail/send'
@@ -238,7 +240,7 @@ async function loadClientBilling(user: CurrentUser, visible: Promise<Set<string>
   }
   try {
     const db = getDb()
-    const [settings, accountRows, invoiceRows, receiptRows] = await Promise.all([
+    const [settings, accountRows, invoiceRows, receiptRows, allocationRows] = await Promise.all([
       db.query.officeInvoiceSettings.findFirst({ where: eq(officeInvoiceSettings.companyId, user.companyId) }),
       db.query.officePaymentAccounts.findMany({
         where: eq(officePaymentAccounts.companyId, user.companyId),
@@ -250,6 +252,19 @@ async function loadClientBilling(user: CurrentUser, visible: Promise<Set<string>
         orderBy: [desc(officeInvoices.createdAt)],
       }),
       db.select().from(officeReceipts).where(eq(officeReceipts.companyId, user.companyId)).orderBy(desc(officeReceipts.createdAt)),
+      db
+        .select({
+          receiptId: officeReceiptAllocations.receiptId,
+          invoiceId: officeReceiptAllocations.invoiceId,
+          subjectClientId: officeReceiptAllocations.subjectClientId,
+          personName: officeReceiptAllocations.personName,
+          invoiceNumber: officeReceiptAllocations.invoiceNumber,
+          amountCents: officeReceiptAllocations.amountCents,
+          description: officeReceiptAllocations.description,
+        })
+        .from(officeReceiptAllocations)
+        .innerJoin(officeReceipts, eq(officeReceiptAllocations.receiptId, officeReceipts.id))
+        .where(eq(officeReceipts.companyId, user.companyId)),
     ])
     const visibleIds = await visible
     return {
@@ -297,13 +312,40 @@ async function loadClientBilling(user: CurrentUser, visible: Promise<Set<string>
             })),
         })),
       receipts: receiptRows
-        .filter(
-          (row) =>
-            (row.clientId != null && visibleIds.has(row.clientId)) ||
-            (row.relatedClientId != null && visibleIds.has(row.relatedClientId)),
-        )
-        .map(
-          (row): ClientReceiptView => ({
+        .filter((row) => {
+          const allocations = allocationRows.filter((allocation) => allocation.receiptId === row.id)
+          if ((row.clientId != null && visibleIds.has(row.clientId)) || (row.relatedClientId != null && visibleIds.has(row.relatedClientId))) {
+            return true
+          }
+          return allocations.some((allocation) => allocation.subjectClientId != null && visibleIds.has(allocation.subjectClientId))
+        })
+        .map((row): ClientReceiptView => {
+          const stored = allocationRows
+            .filter((allocation) => allocation.receiptId === row.id)
+            .map(
+              (allocation): ClientReceiptAllocation => ({
+                invoiceId: allocation.invoiceId,
+                subjectClientId: allocation.subjectClientId,
+                personName: allocation.personName,
+                invoiceNumber: allocation.invoiceNumber,
+                amountCents: allocation.amountCents,
+                description: allocation.description,
+              }),
+            )
+          const allocations =
+            stored.length > 0 || row.invoiceId == null
+              ? stored
+              : [
+                  {
+                    invoiceId: row.invoiceId,
+                    subjectClientId: row.clientId,
+                    personName: row.payerName,
+                    invoiceNumber: null,
+                    amountCents: row.amountCents,
+                    description: row.description,
+                  },
+                ]
+          return {
             id: row.id,
             documentNumber: row.documentNumber,
             clientId: row.clientId,
@@ -318,8 +360,9 @@ async function loadClientBilling(user: CurrentUser, visible: Promise<Set<string>
             paidAtLabel: row.paidAtLabel,
             mpesaRef: row.mpesaRef,
             description: row.description,
-          }),
-        ),
+            allocations,
+          }
+        }),
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : ''

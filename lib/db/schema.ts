@@ -1586,6 +1586,30 @@ export const officeReceipts = pgTable(
   ],
 )
 
+/** How one receipt's money is split across invoices. One M-PESA payment can cover several children. */
+export const officeReceiptAllocations = pgTable(
+  'office_receipt_allocations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    receiptId: uuid('receipt_id')
+      .notNull()
+      .references(() => officeReceipts.id, { onDelete: 'cascade' }),
+    invoiceId: uuid('invoice_id')
+      .notNull()
+      .references(() => officeInvoices.id, { onDelete: 'restrict' }),
+    subjectClientId: uuid('subject_client_id').references(() => officeClients.id, { onDelete: 'set null' }),
+    personName: text('person_name').notNull(),
+    invoiceNumber: text('invoice_number'),
+    amountCents: integer('amount_cents').notNull(),
+    description: text('description').notNull(),
+  },
+  (table) => [
+    uniqueIndex('office_receipt_alloc_invoice_idx').on(table.receiptId, table.invoiceId),
+    index('office_receipt_alloc_invoice_lookup_idx').on(table.invoiceId),
+    index('office_receipt_alloc_subject_idx').on(table.subjectClientId),
+  ],
+)
+
 export const officeInvoiceLinesRelations = relations(officeInvoiceLines, ({ one }) => ({
   invoice: one(officeInvoices, { fields: [officeInvoiceLines.invoiceId], references: [officeInvoices.id] }),
 }))

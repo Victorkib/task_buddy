@@ -682,20 +682,21 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
                 <Button type="button" variant="outline" disabled={pending} onClick={() => openInvoice(blankInvoice(desk))}>
                   New invoice
                 </Button>
-                {saved?.status === 'draft' ? (
+                {saved ? (
                   <Button
                     type="button"
                     variant="outline"
                     disabled={pending}
                     onClick={() => {
-                      if (!window.confirm('Delete this draft?')) return
-                      run(() => deleteInvoice(saved.id), 'Draft deleted.', () => {
+                      const label = saved.documentNumber ?? 'this invoice'
+                      if (!window.confirm(saved.status === 'draft' ? `Delete ${label}?` : `Delete ${label}? This removes it from the record.`)) return
+                      run(() => deleteInvoice(saved.id), saved.status === 'draft' ? 'Draft deleted.' : 'Invoice deleted.', () => {
                         setForm(blankInvoice(desk))
                         closeDrawer()
                       })
                     }}
                   >
-                    Delete draft
+                    Delete invoice
                   </Button>
                 ) : null}
               </div>
@@ -728,6 +729,11 @@ export function InvoicesPanel({ desk, pending, run }: { desk: OfficeDesk; pendin
                       <Button type="button" variant="outline" disabled={pending} onClick={() => run(() => setInvoiceStatus(saved.id, 'void'), 'Invoice voided.')}>
                         Void
                       </Button>
+                      {saved.status === 'sent' || saved.status === 'paid' ? (
+                        <Button type="button" variant="outline" disabled={pending} onClick={() => run(() => setInvoiceStatus(saved.id, 'draft'), 'Marked as a draft.')}>
+                          Return to draft
+                        </Button>
+                      ) : null}
                     </>
                   ) : (
                     <Button type="button" variant="outline" disabled={pending} onClick={() => run(() => setInvoiceStatus(saved.id, 'draft'), 'Marked as a draft.')}>

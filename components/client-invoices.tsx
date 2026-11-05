@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState, useTransition, type FormEvent } from 'react'
-import { Download, FileText, Plus, Printer, ReceiptText } from 'lucide-react'
+import { Download, FileText, Plus, Printer, ReceiptText, Trash2 } from 'lucide-react'
 import { emailInvoice, outlookInvoice, setInvoiceStatus } from '@/app/admin-office-actions'
 import { clientInvoiceFile, deleteClientInvoice, saveClientInvoices } from '@/app/client-invoice-actions'
 import { OfficeDrawer } from '@/components/admin-office-invoices'
@@ -27,6 +27,12 @@ import {
 } from '@/lib/clients/types'
 
 const STATUS_LABEL = { draft: 'Draft', sent: 'Sent', paid: 'Paid', void: 'Void' } as const
+
+function receiptCovers(billing: ClientBilling, invoiceId: string) {
+  return billing.receipts.some(
+    (receipt) => receipt.invoiceId === invoiceId || receipt.allocations.some((allocation) => allocation.invoiceId === invoiceId),
+  )
+}
 
 function errorOf(result: unknown): string | null {
   if (result && typeof result === 'object' && 'error' in result) {
@@ -208,6 +214,30 @@ export function ClientInvoicesSection({
                   <button type="button" disabled={pending} aria-label={`Download ${invoice.documentNumber ?? 'invoice'}`} onClick={() => download(invoice.id)}>
                     <Download aria-hidden="true" />
                   </button>
+                  {billing.canIssue || (invoice.status === 'draft' && invoice.createdById === billing.currentUserId) ? (
+                    <button
+                      type="button"
+                      disabled={pending}
+                      aria-label={`Delete ${invoice.documentNumber ?? 'invoice'}`}
+                      onClick={() => {
+                        const label = invoice.documentNumber ?? 'this invoice'
+                        const warning = invoice.status === 'draft' ? `Delete ${label}?` : `Delete ${label}? This removes it from the record.`
+                        if (!window.confirm(warning)) return
+                        setError(null)
+                        startTransition(async () => {
+                          const result = await deleteClientInvoice(invoice.id)
+                          const problem = errorOf(result)
+                          if (problem) setError(problem)
+                          else {
+                            setNotice(noticeOf(result) ?? 'Invoice deleted.')
+                            onRefresh?.()
+                          }
+                        })
+                      }}
+                    >
+                      <Trash2 aria-hidden="true" />
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     disabled={pending}
@@ -1023,23 +1053,24 @@ function InvoiceComposer({
               <Button type="button" variant="outline" disabled={pending} onClick={onClose}>
                 {live ? 'Close' : 'Cancel'}
               </Button>
-              {live && live.status === 'draft' && (billing.canIssue || live.createdById === billing.currentUserId) ? (
+              {live && (billing.canIssue || (live.status === 'draft' && live.createdById === billing.currentUserId)) ? (
                 <Button
                   type="button"
                   variant="outline"
                   disabled={pending}
                   onClick={() => {
-                    if (!window.confirm('Delete this draft invoice?')) return
+                    const label = live.documentNumber ?? 'this invoice'
+                    if (!window.confirm(live.status === 'draft' ? `Delete ${label}?` : `Delete ${label}? This removes it from the record.`)) return
                     run(
                       () => deleteClientInvoice(live.id),
                       () => {
                         onRefresh?.()
-                        onDone('Draft deleted.')
+                        onDone(live.status === 'draft' ? 'Draft deleted.' : 'Invoice deleted.')
                       },
                     )
                   }}
                 >
-                  Delete draft
+                  Delete invoice
                 </Button>
               ) : null}
             </div>
@@ -1100,6 +1131,11 @@ function InvoiceComposer({
                         >
                           Void
                         </Button>
+                        {live.status === 'sent' || (live.status === 'paid' && !receiptCovers(billing, live.id)) ? (
+                          <Button type="button" variant="outline" disabled={pending} onClick={() => run(() => setInvoiceStatus(live.id, 'draft'), onRefresh)}>
+                            Return to draft
+                          </Button>
+                        ) : null}
                       </>
                     ) : (
                       <Button type="button" variant="outline" disabled={pending} onClick={() => run(() => setInvoiceStatus(live.id, 'draft'), onRefresh)}>

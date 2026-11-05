@@ -63,6 +63,8 @@ import {
   officeInvoiceSettings,
   officeInvoices,
   officePaymentAccounts,
+  officeReceiptAllocations,
+  officeReceipts,
   officeVendors,
   staffProfiles,
   tasks,
@@ -1586,10 +1588,27 @@ export async function saveInvoice(formData: FormData) {
   }
 }
 
+async function receiptNumbersOnInvoice(invoiceId: string) {
+  const db = getDb()
+  const [allocated, legacy] = await Promise.all([
+    db
+      .select({ documentNumber: officeReceipts.documentNumber })
+      .from(officeReceiptAllocations)
+      .innerJoin(officeReceipts, eq(officeReceiptAllocations.receiptId, officeReceipts.id))
+      .where(eq(officeReceiptAllocations.invoiceId, invoiceId)),
+    db.select({ documentNumber: officeReceipts.documentNumber }).from(officeReceipts).where(eq(officeReceipts.invoiceId, invoiceId)),
+  ])
+  return [...new Set([...allocated, ...legacy].map((row) => row.documentNumber ?? 'a receipt'))]
+}
+
 export async function setInvoiceStatus(id: string, status: string) {
   const loaded = await issueInvoiceGate(id)
   if ('error' in loaded) return loaded
   if (!INVOICE_STATUSES.has(status)) return { error: 'Choose draft, sent, paid, or void.' }
+  if (status === 'draft' && loaded.invoice.status === 'paid') {
+    const linked = await receiptNumbersOnInvoice(id)
+    if (linked.length) return { error: `Delete ${linked.join(', ')} first. This invoice is paid by that receipt.` }
+  }
   await getDb().update(officeInvoices).set({ status, updatedAt: new Date() }).where(eq(officeInvoices.id, id))
   refresh()
   const labels: Record<string, string> = { draft: 'Marked as a draft.', sent: 'Marked as sent.', paid: 'Marked as paid.', void: 'Invoice voided.' }
@@ -1601,10 +1620,11 @@ export async function deleteInvoice(id: string) {
   if ('error' in loaded) return loaded
   const existing = await getDb().query.officeInvoices.findFirst({ where: eq(officeInvoices.id, id) })
   if (!existing || existing.companyId !== loaded.currentUser.companyId) return { error: 'That invoice is no longer there.' }
-  if (existing.status !== 'draft') return { error: 'Only a draft can be deleted. Void a sent invoice instead, so the number stays on record.' }
+  const linked = await receiptNumbersOnInvoice(id)
+  if (linked.length) return { error: `Delete ${linked.join(', ')} first. This invoice still has that payment on it.` }
   await getDb().delete(officeInvoices).where(eq(officeInvoices.id, id))
   refresh()
-  return { ok: true as const, notice: 'Draft deleted.' }
+  return { ok: true as const, notice: existing.status === 'draft' ? 'Draft deleted.' : 'Invoice deleted.' }
 }
 
 async function savedInvoice(id: string, companyId: string, purpose: 'read' | 'send') {

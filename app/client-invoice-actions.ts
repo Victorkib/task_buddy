@@ -1,18 +1,18 @@
 'use server'
 
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, or, sql } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 import { parseInvoiceLineRows, invoiceFile, type ParsedInvoiceLine } from '@/lib/admin-office/invoice-records'
 import { amountWithinLimit, invoiceTotals, parseVatRate, type PaymentKind } from '@/lib/admin-office/invoices'
 import { embeddedLetterheadSrc } from '@/lib/admin-office/letterhead-embed'
-import { isIsoDate } from '@/lib/admin-office/leave'
-import { buildReceiptHtml } from '@/lib/admin-office/receipts'
+import { isIsoDate, nairobiToday } from '@/lib/admin-office/leave'
+import { allocationError, receiptFiles, type ReceiptCover } from '@/lib/admin-office/receipts'
 import { hasFullClientAccess } from '@/lib/auth/permissions'
 import { getDb } from '@/lib/db'
 import { invoiceInvolves, loadClientScope } from '@/lib/db/clients'
 import { nextOfficeNumber } from '@/lib/db/office'
 import { getCurrentUser } from '@/lib/db/queries'
-import { officeClients, officeInvoiceLines, officeInvoices, officePaymentAccounts, officeReceipts } from '@/lib/db/schema'
+import { officeClientLinks, officeClients, officeInvoiceLines, officeInvoices, officePaymentAccounts, officeReceiptAllocations, officeReceipts } from '@/lib/db/schema'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const MAX_INVOICES_PER_SAVE = 20
@@ -247,68 +247,79 @@ export async function deleteClientInvoice(id: string) {
   if ('error' in gate) return gate
   const found = await findInvoice(gate, id)
   if ('error' in found) return found
-  if (found.invoice.status !== 'draft') {
-    return { error: 'Only a draft can be deleted. Void a sent invoice instead, so the number stays on record.' as const }
+  const linked = await receiptNumbersOnInvoice(id)
+  if (linked.length) {
+    return { error: `Delete ${linked.join(', ')} first. This invoice still has that payment on it.` as const }
   }
-  if (!gate.canIssue && found.invoice.createdById !== gate.currentUser.id) {
+  if (found.invoice.status !== 'draft' && !gate.canIssue) {
+    return { error: 'Full client access is required to delete an invoice that has been issued.' as const }
+  }
+  if (found.invoice.status === 'draft' && !gate.canIssue && found.invoice.createdById !== gate.currentUser.id) {
     return { error: 'Only someone with full client access, or the person who prepared this draft, can delete it.' as const }
   }
   await getDb().delete(officeInvoices).where(eq(officeInvoices.id, id))
   refresh()
-  return { ok: true as const, notice: 'Draft deleted.' }
+  return { ok: true as const, notice: found.invoice.status === 'draft' ? 'Draft deleted.' : 'Invoice deleted.' }
 }
 
-function receiptInvolves(row: { clientId: string | null; relatedClientId: string | null }, visibleIds: Set<string>) {
-  return (row.clientId != null && visibleIds.has(row.clientId)) || (row.relatedClientId != null && visibleIds.has(row.relatedClientId))
-}
-
-async function receiptDocument(row: {
-  documentNumber: string | null
-  paidOn: string
-  paidAtLabel: string | null
-  payerName: string
-  payerPhone: string | null
-  clientId: string | null
-  relatedClientId: string | null
-  invoiceId: string | null
-  description: string
-  amountCents: number
-  mpesaRef: string
-  accountNumber: string | null
-  accountName: string | null
-}) {
+async function receiptNumbersOnInvoice(invoiceId: string) {
   const db = getDb()
-  const ids = [row.clientId, row.relatedClientId].filter((id): id is string => Boolean(id))
-  const people = ids.length
-    ? await db.select({ id: officeClients.id, name: officeClients.name, email: officeClients.email }).from(officeClients).where(inArray(officeClients.id, ids))
-    : []
-  const client = people.find((person) => person.id === row.clientId)
-  const related = people.find((person) => person.id === row.relatedClientId)
-  const invoice = row.invoiceId
-    ? await db.query.officeInvoices.findFirst({ where: eq(officeInvoices.id, row.invoiceId), columns: { documentNumber: true } })
-    : null
-  const html = buildReceiptHtml({
-    letterhead: embeddedLetterheadSrc(),
-    documentNumber: row.documentNumber ?? 'Receipt',
-    paidOn: String(row.paidOn).slice(0, 10),
-    paidAtLabel: row.paidAtLabel,
-    payerName: row.payerName,
-    payerPhone: row.payerPhone,
-    clientName: client?.name ?? row.payerName,
-    clientEmail: client?.email ?? null,
-    subjectName: related && related.id !== client?.id ? related.name : null,
-    description: row.description,
-    amountCents: row.amountCents,
-    mpesaRef: row.mpesaRef,
-    accountNumber: row.accountNumber,
-    accountName: row.accountName,
-    invoiceNumber: invoice?.documentNumber ?? null,
-  })
-  const filename = `${(row.documentNumber ?? 'receipt').replace(/[^\w.-]+/g, '-')}.html`
-  return { html, filename }
+  const [allocated, legacy] = await Promise.all([
+    db
+      .select({ documentNumber: officeReceipts.documentNumber })
+      .from(officeReceiptAllocations)
+      .innerJoin(officeReceipts, eq(officeReceiptAllocations.receiptId, officeReceipts.id))
+      .where(eq(officeReceiptAllocations.invoiceId, invoiceId)),
+    db.select({ documentNumber: officeReceipts.documentNumber }).from(officeReceipts).where(eq(officeReceipts.invoiceId, invoiceId)),
+  ])
+  return [...new Set([...allocated, ...legacy].map((row) => row.documentNumber ?? 'a receipt'))]
 }
 
-/** Records an M-PESA payment as a letterhead receipt. Full client access only, and only for people they can see. */
+function receiptVisible(
+  row: { clientId: string | null; relatedClientId: string | null },
+  subjects: (string | null)[],
+  visibleIds: Set<string>,
+) {
+  if ((row.clientId != null && visibleIds.has(row.clientId)) || (row.relatedClientId != null && visibleIds.has(row.relatedClientId))) return true
+  return subjects.some((id) => id != null && visibleIds.has(id))
+}
+
+function firstDocumentRow(result: unknown) {
+  const rows = Array.isArray(result)
+    ? result
+    : result && typeof result === 'object' && 'rows' in result && Array.isArray((result as { rows: unknown[] }).rows)
+      ? (result as { rows: unknown[] }).rows
+      : []
+  const row = rows[0]
+  if (!row || typeof row !== 'object') return null
+  const number = (row as { document_number?: unknown }).document_number
+  return typeof number === 'string' ? number : null
+}
+
+async function appliedByInvoice(invoiceIds: string[]) {
+  const applied = new Map<string, number>()
+  if (!invoiceIds.length) return applied
+  const db = getDb()
+  const [allocations, legacy] = await Promise.all([
+    db
+      .select({ invoiceId: officeReceiptAllocations.invoiceId, amountCents: officeReceiptAllocations.amountCents, receiptId: officeReceiptAllocations.receiptId })
+      .from(officeReceiptAllocations)
+      .where(inArray(officeReceiptAllocations.invoiceId, invoiceIds)),
+    db
+      .select({ id: officeReceipts.id, invoiceId: officeReceipts.invoiceId, amountCents: officeReceipts.amountCents })
+      .from(officeReceipts)
+      .where(inArray(officeReceipts.invoiceId, invoiceIds)),
+  ])
+  const covered = new Set(allocations.map((row) => `${row.receiptId}:${row.invoiceId}`))
+  for (const row of allocations) applied.set(row.invoiceId, (applied.get(row.invoiceId) ?? 0) + row.amountCents)
+  for (const row of legacy) {
+    if (!row.invoiceId || covered.has(`${row.id}:${row.invoiceId}`)) continue
+    applied.set(row.invoiceId, (applied.get(row.invoiceId) ?? 0) + row.amountCents)
+  }
+  return applied
+}
+
+/** Records an M-PESA payment as a letterhead receipt. One payment may be split across several invoices. */
 export async function saveClientReceipt(payload: unknown) {
   const gate = await billingGate()
   if ('error' in gate) return gate
@@ -317,7 +328,6 @@ export async function saveClientReceipt(payload: unknown) {
   const input = payload as Record<string, unknown>
   const clientId = text(input.clientId, 64)
   const openedFromId = text(input.openedFromId, 64)
-  const invoiceId = text(input.invoiceId, 64)
   const description = text(input.description, 300)
   const payerName = text(input.payerName, 160)
   const payerPhone = text(input.payerPhone, 20).replace(/\D/g, '')
@@ -328,6 +338,7 @@ export async function saveClientReceipt(payload: unknown) {
   const mpesaRef = text(input.mpesaRef, 20).toUpperCase()
   const sourceText = text(input.sourceText, 1000)
   const amountCents = typeof input.amountCents === 'number' && Number.isInteger(input.amountCents) ? input.amountCents : null
+  const requested = Array.isArray(input.allocations) ? input.allocations : []
   if (!UUID.test(clientId) || !gate.scope.visibleIds.has(clientId)) {
     return { error: 'Choose a student, parent, or guardian you can manage.' as const }
   }
@@ -338,6 +349,17 @@ export async function saveClientReceipt(payload: unknown) {
   if (!/^[A-Z0-9]{6,20}$/.test(mpesaRef)) return { error: 'The M-PESA reference should look like UK4I1124QF.' as const }
   const relatedClientId = UUID.test(openedFromId) && openedFromId !== clientId && gate.scope.visibleIds.has(openedFromId) ? openedFromId : null
 
+  const wanted = new Map<string, number>()
+  for (const entry of requested) {
+    if (!entry || typeof entry !== 'object') return { error: 'Choose the invoices this payment covers.' as const }
+    const row = entry as { invoiceId?: unknown; amountCents?: unknown }
+    const invoiceId = text(row.invoiceId, 64)
+    if (!UUID.test(invoiceId) || typeof row.amountCents !== 'number' || !Number.isInteger(row.amountCents)) {
+      return { error: 'Choose the invoices this payment covers.' as const }
+    }
+    wanted.set(invoiceId, (wanted.get(invoiceId) ?? 0) + row.amountCents)
+  }
+
   const db = getDb()
   const duplicate = await db
     .select({ documentNumber: officeReceipts.documentNumber })
@@ -347,54 +369,159 @@ export async function saveClientReceipt(payload: unknown) {
     return { error: `Reference ${mpesaRef} is already on receipt ${duplicate[0].documentNumber ?? 'another receipt'}.` }
   }
 
-  let invoiceNumber: string | null = null
-  let invoiceStatus: string | null = null
-  let markPaid = false
-  if (invoiceId) {
-    if (!UUID.test(invoiceId)) return { error: 'That invoice is no longer there.' as const }
-    const found = await findInvoice(gate, invoiceId)
-    if ('error' in found) return found
-    const invoice = found.invoice
-    if (!invoiceInvolves(invoice, gate.scope.visibleIds)) {
-      return { error: 'That invoice is for someone outside the records you manage.' as const }
-    }
-    if (invoice.status === 'void') return { error: 'A void invoice cannot take a receipt. Start from another invoice.' as const }
-    const fits =
-      invoice.clientId === clientId ||
-      invoice.clientId === relatedClientId ||
-      invoice.lines.some((line) => line.subjectClientId === clientId || line.subjectClientId === relatedClientId)
-    if (!fits) return { error: 'That invoice is not for the person on this receipt.' as const }
-    invoiceNumber = invoice.documentNumber
-    invoiceStatus = invoice.status
-    const total = invoiceTotals(invoice.lines, invoice.vatEnabled, invoice.vatRateBps).totalCents
-    markPaid = (invoice.status === 'draft' || invoice.status === 'sent') && amountCents >= total
+  const anchors = [clientId, relatedClientId].filter((id): id is string => Boolean(id))
+  const links = await db
+    .select({ fromClientId: officeClientLinks.fromClientId, toClientId: officeClientLinks.toClientId })
+    .from(officeClientLinks)
+    .where(or(inArray(officeClientLinks.fromClientId, anchors), inArray(officeClientLinks.toClientId, anchors)))
+  const family = new Set(anchors)
+  for (const link of links) {
+    family.add(link.fromClientId)
+    family.add(link.toClientId)
   }
 
-  const documentNumber = await nextOfficeNumber('RCT')
-  let created: { id: string } | undefined
+  const invoiceIds = [...wanted.keys()]
+  const invoices = invoiceIds.length
+    ? await db.query.officeInvoices.findMany({ where: inArray(officeInvoices.id, invoiceIds), with: { lines: true } })
+    : []
+  if (invoices.length !== invoiceIds.length) return { error: 'One of those invoices is no longer there.' as const }
+  const applied = await appliedByInvoice(invoiceIds)
+  const subjectIds = [...new Set(invoices.flatMap((invoice) => invoice.lines.map((line) => line.subjectClientId).filter((id): id is string => Boolean(id))))]
+  const named = subjectIds.length
+    ? await db.select({ id: officeClients.id, name: officeClients.name }).from(officeClients).where(inArray(officeClients.id, subjectIds))
+    : []
+  const nameOf = new Map(named.map((person) => [person.id, person.name]))
+  const prepared = invoices.map((invoice) => {
+    const amount = wanted.get(invoice.id) ?? 0
+    const subjects = [...new Set(invoice.lines.map((line) => line.subjectClientId).filter((id): id is string => Boolean(id)))]
+    const personId = subjects.length === 1 ? subjects[0] : invoice.clientId
+    const personName = subjects.length === 1 ? nameOf.get(subjects[0] ?? '') ?? invoice.clientName : subjects.length > 1 ? subjects.map((id) => nameOf.get(id) ?? 'Student').join(' & ') : invoice.clientName
+    const total = invoiceTotals(invoice.lines, invoice.vatEnabled, invoice.vatRateBps).totalCents
+    const outstanding = Math.max(0, total - (applied.get(invoice.id) ?? 0))
+    return { invoice, amount, personId, personName, total, outstanding }
+  })
+  for (const row of prepared) {
+    if (row.invoice.companyId !== gate.currentUser.companyId) return { error: 'One of those invoices is no longer there.' as const }
+    if (!invoiceInvolves(row.invoice, gate.scope.visibleIds)) return { error: 'That invoice is for someone outside the records you manage.' as const }
+    if (row.invoice.status === 'void') return { error: 'A void invoice cannot take a receipt.' as const }
+    if (!invoiceInvolves(row.invoice, family)) return { error: 'That invoice is not for this family.' as const }
+  }
+  const problem = allocationError(
+    amountCents,
+    prepared.map((row) => ({ label: row.invoice.documentNumber ?? row.personName, amountCents: row.amount, outstandingCents: row.outstanding })),
+  )
+  if (problem) return { error: problem }
+
+  const paidIds = prepared
+    .filter((row) => (row.invoice.status === 'draft' || row.invoice.status === 'sent') && (applied.get(row.invoice.id) ?? 0) + row.amount >= row.total)
+    .map((row) => row.invoice.id)
+  const receiptId = crypto.randomUUID()
+  const year = Number(nairobiToday().slice(0, 4))
+  const key = `GCS-RCT-${year}`
+  const singleInvoiceId = prepared.length === 1 ? prepared[0]?.invoice.id ?? null : null
+  const guard = prepared.length
+    ? sql`guard AS (
+        SELECT 1
+        WHERE EXISTS (SELECT 1 FROM locked)
+          AND NOT EXISTS (
+            SELECT 1
+            FROM (VALUES ${sql.join(
+              prepared.map((row) => sql`(${row.invoice.id}::uuid, ${row.amount}::int, ${row.total}::int)`),
+              sql`, `,
+            )}) AS v(invoice_id, amount_cents, total_cents)
+            LEFT JOIN (
+              SELECT invoice_id, COALESCE(SUM(amount_cents), 0) AS applied
+              FROM office_receipt_allocations
+              WHERE invoice_id IN (${sql.join(prepared.map((row) => sql`${row.invoice.id}::uuid`), sql`, `)})
+              GROUP BY invoice_id
+            ) already ON already.invoice_id = v.invoice_id
+            WHERE COALESCE(already.applied, 0) + v.amount_cents > v.total_cents
+          )
+      ),`
+    : sql`guard AS (SELECT 1),`
+  const locked = prepared.length
+    ? sql`locked AS (
+        SELECT id FROM office_invoices
+        WHERE id IN (${sql.join(prepared.map((row) => sql`${row.invoice.id}::uuid`), sql`, `)})
+        FOR UPDATE
+      ),`
+    : sql``
+  const alloc = prepared.length
+    ? sql`, alloc AS (
+        INSERT INTO office_receipt_allocations (id, receipt_id, invoice_id, subject_client_id, person_name, invoice_number, amount_cents, description)
+        SELECT * FROM (VALUES ${sql.join(
+          prepared.map(
+            (row) => sql`(
+              ${crypto.randomUUID()}::uuid,
+              ${receiptId}::uuid,
+              ${row.invoice.id}::uuid,
+              ${row.personId ? sql`${row.personId}::uuid` : sql`NULL::uuid`},
+              ${row.personName},
+              ${row.invoice.documentNumber},
+              ${row.amount}::int,
+              ${description}
+            )`,
+          ),
+          sql`, `,
+        )}) AS v(id, receipt_id, invoice_id, subject_client_id, person_name, invoice_number, amount_cents, description)
+        WHERE EXISTS (SELECT 1 FROM receipt)
+        RETURNING invoice_id
+      )`
+    : sql``
+  const paid = paidIds.length
+    ? sql`, paid AS (
+        UPDATE office_invoices
+        SET status = 'paid', updated_at = now()
+        WHERE id IN (${sql.join(paidIds.map((id) => sql`${id}::uuid`), sql`, `)})
+          AND status IN ('draft', 'sent')
+          AND EXISTS (SELECT 1 FROM receipt)
+        RETURNING id
+      )`
+    : sql``
+
+  let documentNumber: string | null = null
   try {
-    const rows = await db
-      .insert(officeReceipts)
-      .values({
-        companyId: gate.currentUser.companyId,
-        clientId,
-        relatedClientId,
-        invoiceId: invoiceId && UUID.test(invoiceId) ? invoiceId : null,
-        documentNumber,
-        amountCents,
-        payerName,
-        payerPhone: payerPhone || null,
-        accountName: accountName || null,
-        accountNumber: accountNumber || null,
-        paidOn,
-        paidAtLabel: paidAtLabel || null,
-        mpesaRef,
-        description,
-        sourceText: sourceText || null,
-        createdById: gate.currentUser.id,
-      })
-      .returning({ id: officeReceipts.id })
-    created = rows[0]
+    const saved = await db.execute(sql`
+      WITH ${locked}
+      ${guard}
+      seq AS (
+        INSERT INTO office_sequences (key, last_value)
+        SELECT ${key}, 1 FROM guard
+        ON CONFLICT (key) DO UPDATE SET last_value = office_sequences.last_value + 1
+        RETURNING key, last_value
+      ),
+      receipt AS (
+        INSERT INTO office_receipts (
+          id, company_id, client_id, related_client_id, invoice_id, document_number,
+          amount_cents, payer_name, payer_phone, account_name, account_number,
+          paid_on, paid_at_label, mpesa_ref, description, source_text, created_by_id
+        )
+        SELECT
+          ${receiptId}::uuid,
+          ${gate.currentUser.companyId}::uuid,
+          ${clientId}::uuid,
+          ${relatedClientId ? sql`${relatedClientId}::uuid` : sql`NULL::uuid`},
+          ${singleInvoiceId ? sql`${singleInvoiceId}::uuid` : sql`NULL::uuid`},
+          (SELECT key FROM seq) || '-' || lpad((SELECT last_value FROM seq)::text, 4, '0'),
+          ${amountCents}::int,
+          ${payerName},
+          ${payerPhone || null},
+          ${accountName || null},
+          ${accountNumber || null},
+          ${paidOn}::date,
+          ${paidAtLabel || null},
+          ${mpesaRef},
+          ${description},
+          ${sourceText || null},
+          ${gate.currentUser.id}::uuid
+        FROM seq
+        RETURNING document_number
+      )
+      ${alloc}
+      ${paid}
+      SELECT document_number FROM receipt
+    `)
+    documentNumber = firstDocumentRow(saved)
   } catch (error) {
     const detail = error instanceof Error ? `${error.message} ${String(error.cause ?? '')}` : ''
     if (detail.includes('office_receipts_ref_idx') || detail.includes('duplicate key')) {
@@ -402,50 +529,156 @@ export async function saveClientReceipt(payload: unknown) {
     }
     throw error
   }
-  if (!created) return { error: 'The receipt could not be saved. Try again.' as const }
-  if (markPaid && invoiceId) {
-    await db.update(officeInvoices).set({ status: 'paid', updatedAt: new Date() }).where(eq(officeInvoices.id, invoiceId))
-  }
-  const file = await receiptDocument({
+  if (!documentNumber) return { error: 'Those invoices changed while this receipt was saving. Check the amounts and try again.' as const }
+
+  const client = await db.query.officeClients.findFirst({ where: eq(officeClients.id, clientId), columns: { name: true, email: true } })
+  const covers: ReceiptCover[] = prepared.map((row) => ({
+    personId: row.personId,
+    personName: row.personName,
+    invoiceNumber: row.invoice.documentNumber,
+    amountCents: row.amount,
+  }))
+  const files = receiptFiles({
+    letterhead: embeddedLetterheadSrc(),
     documentNumber,
     paidOn,
     paidAtLabel: paidAtLabel || null,
     payerName,
     payerPhone: payerPhone || null,
-    clientId,
-    relatedClientId,
-    invoiceId: invoiceId && UUID.test(invoiceId) ? invoiceId : null,
+    clientName: client?.name ?? payerName,
+    clientEmail: client?.email ?? null,
     description,
     amountCents,
     mpesaRef,
     accountNumber: accountNumber || null,
     accountName: accountName || null,
+    covers,
   })
   refresh()
-  const invoiceNote = !invoiceNumber
-    ? ''
-    : markPaid
-      ? ` Invoice ${invoiceNumber} is marked paid.`
-      : invoiceStatus === 'paid'
-        ? ` Linked to ${invoiceNumber}, which is already paid.`
-        : ` Invoice ${invoiceNumber} stays open because this payment does not cover it.`
+  const paidNumbers = prepared.filter((row) => paidIds.includes(row.invoice.id)).map((row) => row.invoice.documentNumber ?? 'An invoice')
+  const openNumbers = prepared.filter((row) => !paidIds.includes(row.invoice.id) && row.invoice.status !== 'paid').map((row) => row.invoice.documentNumber ?? 'An invoice')
+  const paidNote = paidNumbers.length ? ` Marked paid: ${paidNumbers.join(', ')}.` : ''
+  const openNote = openNumbers.length ? ` Still open: ${openNumbers.join(', ')}.` : ''
   return {
     ok: true as const,
-    id: created.id,
+    id: receiptId,
     documentNumber,
-    html: file.html,
-    filename: file.filename,
-    notice: `Receipt ${documentNumber} saved.${invoiceNote}`.trim(),
+    html: files.combined.html,
+    filename: files.combined.filename,
+    files: [files.combined, ...files.people],
+    notice: `Receipt ${documentNumber} saved.${paidNote}${openNote}`.trim(),
   }
 }
 
-export async function clientReceiptFile(id: string) {
+async function loadReceiptFiles(id: string, companyId: string) {
+  const db = getDb()
+  const [row] = await db.select().from(officeReceipts).where(eq(officeReceipts.id, id))
+  if (!row || row.companyId !== companyId) return null
+  const allocations = await db.select().from(officeReceiptAllocations).where(eq(officeReceiptAllocations.receiptId, id))
+  const covers: ReceiptCover[] = allocations.map((allocation) => ({
+    personId: allocation.subjectClientId,
+    personName: allocation.personName,
+    invoiceNumber: allocation.invoiceNumber,
+    amountCents: allocation.amountCents,
+  }))
+  if (!covers.length && row.invoiceId) {
+    const invoice = await db.query.officeInvoices.findFirst({ where: eq(officeInvoices.id, row.invoiceId), columns: { documentNumber: true, clientName: true, clientId: true } })
+    if (invoice) {
+      covers.push({
+        personId: row.clientId ?? invoice.clientId,
+        personName: invoice.clientName,
+        invoiceNumber: invoice.documentNumber,
+        amountCents: row.amountCents,
+      })
+    }
+  }
+  const client = row.clientId
+    ? await db.query.officeClients.findFirst({ where: eq(officeClients.id, row.clientId), columns: { name: true, email: true } })
+    : null
+  return {
+    row,
+    subjects: covers.map((cover) => cover.personId),
+    files: receiptFiles({
+      letterhead: embeddedLetterheadSrc(),
+      documentNumber: row.documentNumber ?? 'Receipt',
+      paidOn: String(row.paidOn).slice(0, 10),
+      paidAtLabel: row.paidAtLabel,
+      payerName: row.payerName,
+      payerPhone: row.payerPhone,
+      clientName: client?.name ?? row.payerName,
+      clientEmail: client?.email ?? null,
+      description: row.description,
+      amountCents: row.amountCents,
+      mpesaRef: row.mpesaRef,
+      accountNumber: row.accountNumber,
+      accountName: row.accountName,
+      covers,
+    }),
+  }
+}
+
+/** `part` is `combined`, `all`, or a person id from the receipt. */
+export async function clientReceiptFile(id: string, part = 'combined') {
   const gate = await billingGate()
   if ('error' in gate) return gate
   if (!UUID.test(id)) return { error: 'That receipt is no longer there.' as const }
-  const [row] = await getDb().select().from(officeReceipts).where(eq(officeReceipts.id, id))
+  const loaded = await loadReceiptFiles(id, gate.currentUser.companyId)
+  if (!loaded) return { error: 'That receipt is no longer there.' as const }
+  if (!receiptVisible(loaded.row, loaded.subjects, gate.scope.visibleIds)) {
+    return { error: 'That receipt is for someone outside the records you manage.' as const }
+  }
+  const { combined, people } = loaded.files
+  const chosen = part === 'all' ? (people.length > 1 ? people : [combined]) : part === 'combined' ? [combined] : people.filter((file) => file.personId === part)
+  if (!chosen.length) return { error: 'That receipt copy is no longer there.' as const }
+  return { ok: true as const, files: chosen.map((file) => ({ html: file.html, filename: file.filename, label: file.label })) }
+}
+
+/** Removes a receipt and reopens any invoice that this payment had fully covered. */
+export async function deleteClientReceipt(id: string) {
+  const gate = await billingGate()
+  if ('error' in gate) return gate
+  if (!gate.canIssue) return { error: 'Full client access is required to delete a receipt.' as const }
+  if (!UUID.test(id)) return { error: 'That receipt is no longer there.' as const }
+  const db = getDb()
+  const [row] = await db.select().from(officeReceipts).where(eq(officeReceipts.id, id))
   if (!row || row.companyId !== gate.currentUser.companyId) return { error: 'That receipt is no longer there.' as const }
-  if (!receiptInvolves(row, gate.scope.visibleIds)) return { error: 'That receipt is for someone outside the records you manage.' as const }
-  const file = await receiptDocument(row)
-  return { ok: true as const, html: file.html, filename: file.filename }
+  const allocations = await db.select().from(officeReceiptAllocations).where(eq(officeReceiptAllocations.receiptId, id))
+  if (!receiptVisible(row, allocations.map((allocation) => allocation.subjectClientId), gate.scope.visibleIds)) {
+    return { error: 'That receipt is for someone outside the records you manage.' as const }
+  }
+  const invoiceIds = [...new Set([...allocations.map((allocation) => allocation.invoiceId), ...(row.invoiceId ? [row.invoiceId] : [])])]
+  const invoices = invoiceIds.length ? await db.query.officeInvoices.findMany({ where: inArray(officeInvoices.id, invoiceIds), with: { lines: true } }) : []
+  const applied = await appliedByInvoice(invoiceIds)
+  const reopen = invoices
+    .filter((invoice) => invoice.status === 'paid')
+    .filter((invoice) => {
+      const fromThis = allocations.filter((allocation) => allocation.invoiceId === invoice.id).reduce((sum, allocation) => sum + allocation.amountCents, 0)
+      const legacy = row.invoiceId === invoice.id && allocations.every((allocation) => allocation.invoiceId !== invoice.id) ? row.amountCents : 0
+      const remaining = (applied.get(invoice.id) ?? 0) - fromThis - legacy
+      const total = invoiceTotals(invoice.lines, invoice.vatEnabled, invoice.vatRateBps).totalCents
+      return remaining < total
+    })
+    .map((invoice) => invoice.id)
+
+  const reopenSql = reopen.length
+    ? sql`, reopen AS (
+        UPDATE office_invoices
+        SET status = 'sent', updated_at = now()
+        WHERE id IN (${sql.join(reopen.map((invoiceId) => sql`${invoiceId}::uuid`), sql`, `)})
+          AND status = 'paid'
+          AND EXISTS (SELECT 1 FROM gone)
+        RETURNING id
+      )`
+    : sql``
+  await db.execute(sql`
+    WITH gone AS (
+      DELETE FROM office_receipts
+      WHERE id = ${id}::uuid AND company_id = ${gate.currentUser.companyId}::uuid
+      RETURNING id
+    )
+    ${reopenSql}
+    SELECT id FROM gone
+  `)
+  refresh()
+  return { ok: true as const, notice: `Receipt ${row.documentNumber ?? ''} deleted.`.trim() }
 }

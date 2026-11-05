@@ -1,14 +1,14 @@
 'use client'
 
 import { useMemo, useState, useTransition, type FormEvent } from 'react'
-import { Download, Printer, Receipt } from 'lucide-react'
-import { clientReceiptFile, saveClientReceipt } from '@/app/client-invoice-actions'
+import { Download, Printer, Receipt, Trash2 } from 'lucide-react'
+import { clientReceiptFile, deleteClientReceipt, saveClientReceipt } from '@/app/client-invoice-actions'
 import { Button } from '@/components/ui/button'
-import { downloadHtml, openPrintWindow, writeAndPrint } from '@/lib/admin-office/invoice-download'
+import { downloadHtml, openPrintWindow, wait, writeAndPrint } from '@/lib/admin-office/invoice-download'
 import { formatMoney, invoiceTotals } from '@/lib/admin-office/invoices'
 import { globeconDate } from '@/lib/admin-office/letters'
 import { formatMpesaPhone, parseMpesaConfirmation, type MpesaPayment } from '@/lib/admin-office/receipts'
-import type { ClientBilling, ClientReceiptView, ClientRecord } from '@/lib/clients/types'
+import type { ClientBilling, ClientInvoiceView, ClientReceiptView, ClientRecord } from '@/lib/clients/types'
 
 function errorOf(result: unknown) {
   if (result && typeof result === 'object' && 'error' in result && typeof (result as { error?: unknown }).error === 'string') {
@@ -26,6 +26,24 @@ function noticeOf(result: unknown) {
 
 function digits(value: string | null | undefined) {
   return (value ?? '').replace(/\D/g, '')
+}
+
+function centsFromText(value: string) {
+  const cleaned = value.replace(/,/g, '').trim()
+  if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return null
+  const [whole, frac = ''] = cleaned.split('.')
+  return Number(whole) * 100 + Number((frac + '00').slice(0, 2))
+}
+
+function appliedToInvoice(billing: ClientBilling, invoiceId: string) {
+  return billing.receipts.reduce(
+    (sum, receipt) => sum + receipt.allocations.filter((allocation) => allocation.invoiceId === invoiceId).reduce((inner, allocation) => inner + allocation.amountCents, 0),
+    0,
+  )
+}
+
+function invoiceOwing(invoice: ClientInvoiceView) {
+  return invoiceTotals(invoice.lines, invoice.vatEnabled, invoice.vatRateBps).totalCents
 }
 
 function blankPayment(): MpesaPayment {
@@ -63,7 +81,7 @@ export function ClientReceiptsSection({
   const [parsed, setParsed] = useState(false)
   const [clientId, setClientId] = useState(record.id)
   const [description, setDescription] = useState('')
-  const [invoiceId, setInvoiceId] = useState('')
+  const [applied, setApplied] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
@@ -71,8 +89,10 @@ export function ClientReceiptsSection({
   if (composeToken !== seen) {
     setSeen(composeToken)
     if (composeToken > 0) {
+      const preset = presetInvoiceId ? billing.invoices.find((invoice) => invoice.id === presetInvoiceId) : null
+      const presetOwe = preset ? Math.max(0, invoiceOwing(preset) - appliedToInvoice(billing, preset.id)) : 0
       setOpen(true)
-      setInvoiceId(presetInvoiceId ?? '')
+      setApplied(preset && presetOwe > 0 ? { [preset.id]: (presetOwe / 100).toFixed(2) } : {})
       setClientId(record.id)
       setMessage('')
       setPayment(blankPayment())
@@ -85,10 +105,15 @@ export function ClientReceiptsSection({
 
   const receipts = useMemo(
     () =>
-      billing.receipts.filter(
-        (receipt) => receipt.clientId === record.id || receipt.relatedClientId === record.id,
-      ),
-    [billing.receipts, record.id],
+      billing.receipts.filter((receipt) => {
+        if (receipt.clientId === record.id || receipt.relatedClientId === record.id) return true
+        return receipt.allocations.some((allocation) => {
+          if (allocation.subjectClientId === record.id) return true
+          const invoice = billing.invoices.find((item) => item.id === allocation.invoiceId)
+          return Boolean(invoice && (invoice.clientId === record.id || invoice.lines.some((line) => line.subjectClientId === record.id)))
+        })
+      }),
+    [billing.invoices, billing.receipts, record.id],
   )
 
   const parties = useMemo(() => {
@@ -103,16 +128,18 @@ export function ClientReceiptsSection({
     const ids = new Set(parties.map((person) => person.id))
     return billing.invoices.filter((invoice) => {
       if (invoice.status === 'void') return false
-      if (invoice.clientId && ids.has(invoice.clientId)) return true
-      return invoice.lines.some((line) => line.subjectClientId != null && ids.has(line.subjectClientId))
+      const owing = invoiceOwing(invoice) - appliedToInvoice(billing, invoice.id)
+      if (owing <= 0 && !applied[invoice.id]) return false
+      const fits = (invoice.clientId != null && ids.has(invoice.clientId)) || invoice.lines.some((line) => line.subjectClientId != null && ids.has(line.subjectClientId))
+      return fits
     })
-  }, [billing.invoices, parties])
+  }, [applied, billing, parties])
 
-  const chosenInvoice = openInvoices.find((invoice) => invoice.id === invoiceId) ?? null
-  const chosenTotal = chosenInvoice ? invoiceTotals(chosenInvoice.lines, chosenInvoice.vatEnabled, chosenInvoice.vatRateBps).totalCents : null
   const receiptFor = parties.find((person) => person.id === clientId) ?? record
   const phoneMatch = Boolean(payment.payerPhone && digits(receiptFor.phone).endsWith(payment.payerPhone.slice(-9)))
   const amountLabel = payment.amountCents > 0 ? formatMoney(payment.amountCents) : ''
+  const appliedCents = Object.values(applied).reduce((sum, value) => sum + (centsFromText(value) ?? 0), 0)
+  const unapplied = payment.amountCents - appliedCents
 
   function applyMessage(value: string) {
     setMessage(value)
@@ -126,43 +153,81 @@ export function ClientReceiptsSection({
     setError(null)
     const payer = parties.find((person) => digits(person.phone).endsWith(next.payerPhone.slice(-9)))
     if (payer) setClientId(payer.id)
-    const match = openInvoices.find((invoice) => invoiceTotals(invoice.lines, invoice.vatEnabled, invoice.vatRateBps).totalCents === next.amountCents)
-    if (match && !invoiceId) setInvoiceId(match.id)
+    const rows = openInvoices
+      .map((invoice) => ({ invoice, owe: Math.max(0, invoiceOwing(invoice) - appliedToInvoice(billing, invoice.id)) }))
+      .filter((row) => row.owe > 0)
+    const nextApplied: Record<string, string> = {}
+    const covered = rows.reduce((sum, row) => sum + row.owe, 0)
+    if (rows.length > 0 && covered === next.amountCents) {
+      for (const row of rows) nextApplied[row.invoice.id] = (row.owe / 100).toFixed(2)
+    } else {
+      const exact = rows.filter((row) => row.owe === next.amountCents)
+      if (exact.length === 1 && exact[0]) nextApplied[exact[0].invoice.id] = (next.amountCents / 100).toFixed(2)
+    }
+    setApplied(nextApplied)
   }
 
   function patch<K extends keyof MpesaPayment>(key: K, value: MpesaPayment[K]) {
     setPayment((current) => ({ ...current, [key]: value }))
   }
 
-  function download(id: string) {
+  function filesOf(result: unknown) {
+    if (!result || typeof result !== 'object' || !('files' in result) || !Array.isArray((result as { files?: unknown }).files)) return []
+    return (result as { files: { html?: string; filename?: string; label?: string }[] }).files.filter(
+      (file): file is { html: string; filename: string; label: string } => Boolean(file.html && file.filename),
+    )
+  }
+
+  function download(id: string, part = 'combined') {
     setError(null)
     startTransition(async () => {
-      const result = await clientReceiptFile(id)
+      const result = await clientReceiptFile(id, part)
       const problem = errorOf(result)
-      if (problem || !result || !('html' in result) || !result.html) {
+      const files = filesOf(result)
+      if (problem || files.length === 0) {
         setError(problem ?? 'The receipt could not be prepared.')
         return
       }
-      downloadHtml(result.filename, result.html)
-      setNotice('Receipt downloaded.')
+      for (const [index, file] of files.entries()) {
+        if (index > 0) await wait(400)
+        downloadHtml(file.filename, file.html)
+      }
+      setNotice(files.length > 1 ? `${files.length} receipts downloaded.` : 'Receipt downloaded.')
     })
   }
 
-  function print(id: string) {
+  function print(id: string, part = 'combined') {
     const win = openPrintWindow('receipt')
     if (!win) {
       setError('Allow pop-up windows so the receipt can open for printing.')
       return
     }
     startTransition(async () => {
-      const result = await clientReceiptFile(id)
+      const result = await clientReceiptFile(id, part)
       const problem = errorOf(result)
-      if (problem || !result || !('html' in result) || !result.html) {
+      const file = filesOf(result)[0]
+      if (problem || !file) {
         win.close()
         setError(problem ?? 'The receipt could not be prepared.')
         return
       }
-      writeAndPrint(win, result.html)
+      writeAndPrint(win, file.html)
+    })
+  }
+
+  function remove(receipt: ClientReceiptView) {
+    const label = receipt.documentNumber ?? 'this receipt'
+    if (!window.confirm(`Delete ${label}? Invoices that this payment had fully covered go back to sent.`)) return
+    setError(null)
+    startTransition(async () => {
+      const result = await deleteClientReceipt(receipt.id)
+      const problem = errorOf(result)
+      if (problem) {
+        setError(problem)
+        return
+      }
+      setNotice(noticeOf(result) ?? 'Receipt deleted.')
+      onRefresh?.()
     })
   }
 
@@ -175,11 +240,15 @@ export function ClientReceiptsSection({
       setError('Paste the M-PESA confirmation, or fill in the payer, amount, and reference.')
       return
     }
+    const allocations = Object.entries(applied).flatMap(([invoiceId, value]) => {
+      const cents = centsFromText(value)
+      return cents && cents > 0 ? [{ invoiceId, amountCents: cents }] : []
+    })
     startTransition(async () => {
       const result = await saveClientReceipt({
         clientId,
         openedFromId: record.id,
-        invoiceId: invoiceId || null,
+        allocations,
         description,
         sourceText: message,
         amountCents: amount,
@@ -203,7 +272,7 @@ export function ClientReceiptsSection({
       setPayment(blankPayment())
       setParsed(false)
       setDescription('')
-      setInvoiceId('')
+      setApplied({})
       onRefresh?.()
     })
   }
@@ -312,24 +381,59 @@ export function ClientReceiptsSection({
                   <input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Term 1 fees" />
                 </label>
               </div>
-              <label>
-                Apply to an invoice
-                <select value={invoiceId} onChange={(event) => setInvoiceId(event.target.value)}>
-                  <option value="">No invoice — receipt only</option>
-                  {openInvoices.map((invoice) => (
-                    <option key={invoice.id} value={invoice.id}>
-                      {invoice.documentNumber ?? 'Draft'} · {invoice.status} · {formatMoney(invoiceTotals(invoice.lines, invoice.vatEnabled, invoice.vatRateBps).totalCents)} · {invoice.clientName}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {chosenInvoice && chosenTotal != null && payment.amountCents > 0 ? (
-                <p className={`invoice-note${chosenInvoice.status === 'paid' || payment.amountCents >= chosenTotal ? '' : ' invoice-note-warn'}`}>
-                  {chosenInvoice.status === 'paid'
-                    ? `${chosenInvoice.documentNumber ?? 'This invoice'} is already paid. The receipt will be linked to it.`
-                    : payment.amountCents >= chosenTotal
-                      ? `${amountLabel} covers ${chosenInvoice.documentNumber ?? 'this invoice'}. It will be marked paid.`
-                      : `${amountLabel} is less than ${formatMoney(chosenTotal)}. The invoice stays open.`}
+              <fieldset className="client-receipt-alloc">
+                <legend>Apply this payment</legend>
+                {openInvoices.length === 0 ? <p className="invoice-note">No open invoice for this family. The receipt can still be saved on its own.</p> : null}
+                {openInvoices.map((invoice) => {
+                  const owe = Math.max(0, invoiceOwing(invoice) - appliedToInvoice(billing, invoice.id))
+                  const checked = invoice.id in applied
+                  const who = [...new Set(invoice.lines.map((line) => line.subjectClientId).filter((id): id is string => Boolean(id)))]
+                    .map((id) => clientsById.get(id)?.name)
+                    .filter((name): name is string => Boolean(name))
+                  return (
+                    <label key={invoice.id} className="client-receipt-alloc-row">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(event) => {
+                          setApplied((current) => {
+                            const next = { ...current }
+                            if (event.target.checked) next[invoice.id] = (Math.min(owe, Math.max(0, unapplied)) / 100).toFixed(2)
+                            else delete next[invoice.id]
+                            return next
+                          })
+                        }}
+                      />
+                      <span>
+                        <strong>{invoice.documentNumber ?? 'Draft'}</strong>
+                        <small>
+                          {who.length ? who.join(' & ') : invoice.clientName} · {formatMoney(owe)} still open
+                        </small>
+                      </span>
+                      <input
+                        inputMode="decimal"
+                        disabled={!checked}
+                        value={applied[invoice.id] ?? ''}
+                        aria-label={`Amount for ${invoice.documentNumber ?? 'invoice'}`}
+                        onChange={(event) => {
+                          const value = event.target.value.replace(/,/g, '')
+                          if (value && !/^\d*\.?\d{0,2}$/.test(value)) return
+                          setApplied((current) => ({ ...current, [invoice.id]: value }))
+                        }}
+                      />
+                    </label>
+                  )
+                })}
+              </fieldset>
+              {payment.amountCents > 0 ? (
+                <p className={`invoice-note${unapplied === 0 || appliedCents === 0 ? '' : ' invoice-note-warn'}`}>
+                  {appliedCents === 0
+                    ? `${amountLabel} will be saved as a receipt with no invoice.`
+                    : unapplied === 0
+                      ? `${amountLabel} is fully applied. Each invoice is marked paid when its balance is covered.`
+                      : unapplied > 0
+                        ? `${formatMoney(unapplied)} is not on an invoice yet.`
+                        : `${formatMoney(Math.abs(unapplied))} is more than the payment.`}
                 </p>
               ) : null}
               <div className="invoice-action-row">
@@ -343,7 +447,15 @@ export function ClientReceiptsSection({
       {receipts.length > 0 ? (
         <ul className="clients-invoice-list">
           {receipts.map((receipt) => (
-            <ReceiptRow key={receipt.id} receipt={receipt} pending={pending} onDownload={download} onPrint={print} />
+            <ReceiptRow
+              key={receipt.id}
+              receipt={receipt}
+              pending={pending}
+              canDelete={billing.canIssue}
+              onDownload={download}
+              onPrint={print}
+              onDelete={remove}
+            />
           ))}
         </ul>
       ) : null}
@@ -354,14 +466,19 @@ export function ClientReceiptsSection({
 function ReceiptRow({
   receipt,
   pending,
+  canDelete,
   onDownload,
   onPrint,
+  onDelete,
 }: {
   receipt: ClientReceiptView
   pending: boolean
-  onDownload: (id: string) => void
-  onPrint: (id: string) => void
+  canDelete: boolean
+  onDownload: (id: string, part?: string) => void
+  onPrint: (id: string, part?: string) => void
+  onDelete: (receipt: ClientReceiptView) => void
 }) {
+  const people = [...new Map(receipt.allocations.map((allocation) => [allocation.subjectClientId ?? `name:${allocation.personName}`, allocation])).values()]
   return (
     <li>
       <div className="clients-invoice-open is-static">
@@ -371,17 +488,35 @@ function ReceiptRow({
           <small>
             {globeconDate(receipt.paidOn)}
             {receipt.paidAtLabel ? ` · ${receipt.paidAtLabel}` : ''} · {receipt.payerName} · {receipt.mpesaRef}
+            {people.length ? ` · ${people.map((person) => person.personName).join(', ')}` : ''}
           </small>
         </span>
         <em>{formatMoney(receipt.amountCents)}</em>
       </div>
-      <div className="clients-invoice-actions">
-        <button type="button" disabled={pending} aria-label={`Download ${receipt.documentNumber ?? 'receipt'}`} onClick={() => onDownload(receipt.id)}>
-          <Download aria-hidden="true" />
+      <div className="clients-invoice-actions client-receipt-copies">
+        <button type="button" disabled={pending} onClick={() => onDownload(receipt.id, 'combined')}>
+          <Download aria-hidden="true" /> One receipt
         </button>
-        <button type="button" disabled={pending} aria-label={`Print ${receipt.documentNumber ?? 'receipt'}`} onClick={() => onPrint(receipt.id)}>
+        <button type="button" disabled={pending} aria-label={`Print ${receipt.documentNumber ?? 'receipt'}`} onClick={() => onPrint(receipt.id, 'combined')}>
           <Printer aria-hidden="true" />
         </button>
+        {people.length > 1 ? (
+          <button type="button" disabled={pending} onClick={() => onDownload(receipt.id, 'all')}>
+            <Download aria-hidden="true" /> Each child
+          </button>
+        ) : null}
+        {people.length > 1
+          ? people.map((person) => (
+              <button key={person.subjectClientId ?? person.personName} type="button" disabled={pending || !person.subjectClientId} onClick={() => person.subjectClientId && onDownload(receipt.id, person.subjectClientId)}>
+                <Download aria-hidden="true" /> {person.personName}
+              </button>
+            ))
+          : null}
+        {canDelete ? (
+          <button type="button" disabled={pending} aria-label={`Delete ${receipt.documentNumber ?? 'receipt'}`} onClick={() => onDelete(receipt)}>
+            <Trash2 aria-hidden="true" />
+          </button>
+        ) : null}
       </div>
     </li>
   )

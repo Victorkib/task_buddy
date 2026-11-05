@@ -137,6 +137,15 @@ export type ClientInvoiceView = {
   lines: ClientInvoiceLine[]
 }
 
+export type ClientReceiptAllocation = {
+  invoiceId: string
+  subjectClientId: string | null
+  personName: string
+  invoiceNumber: string | null
+  amountCents: number
+  description: string
+}
+
 export type ClientReceiptView = {
   id: string
   documentNumber: string | null
@@ -152,6 +161,7 @@ export type ClientReceiptView = {
   paidAtLabel: string | null
   mpesaRef: string
   description: string
+  allocations: ClientReceiptAllocation[]
 }
 
 export type ClientPaymentAccount = {
